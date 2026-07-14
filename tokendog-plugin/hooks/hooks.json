@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [
+        { "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/token_count.py", "timeout": 10 },
+        { "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/budget_enforce.py", "timeout": 10 }
+      ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [
+        { "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/token_count.py", "timeout": 10 },
+        { "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/truncate_output.py", "timeout": 10 }
+      ] }
+    ],
+    "Stop": [
+      { "hooks": [
+        { "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/token_count.py", "timeout": 10 },
+        { "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_summary.py", "timeout": 10 },
+        { "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/budget_alert.py", "timeout": 10 }
+      ] }
+    ],
+    "SessionStart": [
+      { "hooks": [
+        { "type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/token_count.py", "timeout": 10 }
+      ] }
+    ]
+  }
+}

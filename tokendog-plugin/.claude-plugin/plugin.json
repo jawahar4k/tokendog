@@ -1,0 +1,22 @@
+{
+  "name": "tokendog",
+  "displayName": "TokenDog",
+  "version": "0.1.0",
+  "description": "Watch and reduce Claude Code / Glitch token spend.",
+  "license": "Apache-2.0",
+  "hooks": "./hooks/hooks.json",
+  "commands": [
+    "./commands/tokendog-cost.md",
+    "./commands/tokendog-doctor.md",
+    "./commands/tokendog-budget.md",
+    "./commands/tokendog-audit.md",
+    "./commands/tokendog-init.md"
+  ],
+  "mcpServers": {
+    "tokendog-cost": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcpServers/tokendog-cost/server.py"],
+      "cwd": "${CLAUDE_PROJECT_DIR}"
+    }
+  }
+}
