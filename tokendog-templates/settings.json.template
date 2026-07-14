@@ -1,0 +1,19 @@
+{
+  "model": "claude-sonnet-4-6",
+  "cleanupPeriodDays": 7,
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": []
+  },
+  "env": {
+    "TOKENDOG_MAX_LINES": "200",
+    "TOKENDOG_MAX_BYTES": "50000"
+  }
+}

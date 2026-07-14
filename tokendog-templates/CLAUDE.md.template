@@ -1,0 +1,19 @@
+# TokenDog frugality defaults
+
+These defaults reduce Claude Code token spend without hurting quality. Keep them terse.
+
+## Reading & searching
+- Prefer `Read` with `offset`+`limit`; don't slurp whole large files, and don't re-read a file already in context.
+- Use narrow `Grep` (specific pattern, `path:`/`glob:` scoping, `head_limit`); prefer `files_with_matches`/`count` when you only need locations.
+- Never dump a whole directory tree when a targeted glob answers the question.
+
+## Bash
+- Cap noisy output: pipe through `head`/`tail`, prefer `--quiet`, `wc -l` before catting large files.
+
+## Output discipline
+- Be brief — no preamble or after-the-fact summaries unless asked. Prefer structured output over prose when returning data. Brevity is a feature.
+
+## Session hygiene
+- `/clear` when the topic changes. Batch related questions instead of chatty round-trips.
+
+<!-- TOKENDOG_EXTENSION_MARKER -->

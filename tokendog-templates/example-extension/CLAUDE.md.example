@@ -1,0 +1,8 @@
+# TokenDog frugality defaults
+- (the canonical frugal rules live above the marker and are refreshed by `tokendog init`)
+
+<!-- TOKENDOG_EXTENSION_MARKER -->
+# Acme Corp — internal conventions
+- Service registry: https://registry.acme.internal
+- Prefer the `acme-db` MCP for schema questions.
+- Deploy runbook: docs/runbooks/deploy.md
