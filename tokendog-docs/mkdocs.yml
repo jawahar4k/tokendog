@@ -1,0 +1,10 @@
+site_name: TokenDog
+site_description: The watchdog for your Claude Code and Glitch token spend.
+theme:
+  name: material
+nav:
+  - Quickstart: quickstart.md
+  - How it works: how-it-works.md
+  - Extending: extending.md
+  - Comparison: comparison.md
+  - FAQ: faq.md
