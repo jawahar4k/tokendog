@@ -13,15 +13,46 @@ def _run(mod, payload, monkeypatch, capsys):
     rc = mod.main()
     return rc, capsys.readouterr().out
 
-def test_large_output_truncated(monkeypatch, capsys):
+def test_large_output_truncated(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
     monkeypatch.setenv("TOKENDOG_MAX_LINES", "50")
     mod = _load()
     big = "\n".join(str(i) for i in range(1000))
-    rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big}, monkeypatch, capsys)
+    rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big, "tool_name": "Bash"}, monkeypatch, capsys)
     assert rc == 0
     data = json.loads(out)
     assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
     assert "truncated" in data["hookSpecificOutput"]["updatedToolOutput"]
+    # enforce mode records a savings entry
+    from tokendog.savings import savings_summary
+    s = savings_summary()
+    assert s["events"] == 1 and s["total_saved"] > 0 and s["modes"] == {"enforce": 1}
+
+
+def test_shadow_mode_records_but_does_not_modify(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    monkeypatch.setenv("TOKENDOG_MAX_LINES", "50")
+    monkeypatch.setenv("TOKENDOG_OBSERVE_ONLY", "1")
+    mod = _load()
+    big = "\n".join(str(i) for i in range(1000))
+    rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big, "tool_name": "Bash"}, monkeypatch, capsys)
+    assert rc == 0
+    assert out.strip() == ""  # output NOT modified
+    from tokendog.savings import savings_summary
+    s = savings_summary()
+    assert s["events"] == 1 and s["total_saved"] > 0 and s["modes"] == {"shadow": 1}
+
+
+def test_mode_off_does_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    monkeypatch.setenv("TOKENDOG_MAX_LINES", "50")
+    monkeypatch.setenv("TOKENDOG_TRUNCATE_MODE", "off")
+    mod = _load()
+    big = "\n".join(str(i) for i in range(1000))
+    rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big, "tool_name": "Bash"}, monkeypatch, capsys)
+    assert rc == 0 and out.strip() == ""
+    from tokendog.savings import savings_summary
+    assert savings_summary()["events"] == 0
 
 def test_small_output_no_stdout(monkeypatch, capsys):
     mod = _load()

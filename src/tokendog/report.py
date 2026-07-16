@@ -33,6 +33,30 @@ def format_rollup(summary: dict) -> str:
     return "\n".join(lines)
 
 
+def format_savings(s: dict) -> str:
+    lines = [
+        "### TokenDog savings — with vs without truncation",
+        "",
+        f"- truncation events: {s['events']}",
+        f"- tokens saved: {s['total_saved']:,} of {s['total_original']:,} "
+        f"truncated-call tokens ({s['pct']:.1f}%)",
+    ]
+    if s["modes"]:
+        lines.append("- modes: " + ", ".join(f"{k}={v}" for k, v in sorted(s["modes"].items())))
+    if s["per_tool"]:
+        lines += ["", "| Tool | Tokens saved |", "|---|--:|"]
+        for tool, saved in sorted(s["per_tool"].items(), key=lambda kv: -kv[1]):
+            lines.append(f"| {tool} | {saved:,} |")
+    if s["events"] == 0:
+        lines.append("")
+        lines.append("_No truncations recorded yet — nothing has been altered._")
+    else:
+        lines.append("")
+        lines.append("_shadow rows are PROJECTED savings; output was NOT modified. "
+                     "enforce rows were applied._")
+    return "\n".join(lines)
+
+
 def doctor_report(cwd: str) -> str:
     home = tokendog_home()
     n_events = sum(1 for _ in read_events())
@@ -70,6 +94,8 @@ def main(argv=None) -> int:
     a = sub.add_parser("audit")
     a.add_argument("--session")
 
+    sub.add_parser("savings")
+
     i = sub.add_parser("init")
     i.add_argument("--target", default=".")
     i.add_argument("--force", action="store_true")
@@ -104,6 +130,9 @@ def main(argv=None) -> int:
             rollup = {"group_by": "session_id",
                       "rows": [r for r in cost_summary(group_by="session_id")["rows"] if r["key"] == args.session]}
         print(format_rollup(rollup))
+    elif args.cmd == "savings":
+        from .savings import savings_summary
+        print(format_savings(savings_summary()))
     elif args.cmd == "init":
         written = apply_templates(repo_templates_dir(), args.target, force=args.force)
         for p in written:

@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
-"""PostToolUse hook: cap oversized tool output. Degrades to pass-through on any error."""
+"""PostToolUse hook: cap oversized tool output. Degrades to pass-through on any error.
+
+Modes (env TOKENDOG_TRUNCATE_MODE, default "enforce"):
+  enforce — shorten oversized output (the model sees the shortened version).
+  shadow  — record what WOULD be saved but leave the output untouched.
+  off     — do nothing.
+Setting TOKENDOG_OBSERVE_ONLY=1 forces shadow mode (watch-only, never modifies calls).
+Every truncation (enforced or shadow) is logged to the savings ledger."""
 import json
 import os
 import sys
+
+def _truthy(v: str | None) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 def main() -> int:
     try:
@@ -11,6 +21,11 @@ def main() -> int:
     except Exception:
         return 0
     if not isinstance(payload, dict):
+        return 0
+    mode = os.environ.get("TOKENDOG_TRUNCATE_MODE", "enforce").strip().lower()
+    if _truthy(os.environ.get("TOKENDOG_OBSERVE_ONLY")):
+        mode = "shadow"
+    if mode == "off":
         return 0
     try:
         from tokendog.truncate import truncate_text
@@ -23,7 +38,17 @@ def main() -> int:
         max_lines = int(os.environ.get("TOKENDOG_MAX_LINES", "200"))
         max_bytes = int(os.environ.get("TOKENDOG_MAX_BYTES", "50000"))
         new_out, cut = truncate_text(out, max_lines=max_lines, max_bytes=max_bytes)
-        if cut:
+        if not cut:
+            return 0
+        try:
+            from tokendog.savings import record_savings
+            record_savings(session_id=payload.get("session_id"),
+                           tool=payload.get("tool_name"),
+                           original=out, kept=new_out, mode=mode)
+        except Exception:
+            pass
+        # Only enforce mode alters what the model sees; shadow just records.
+        if mode == "enforce":
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
                 "updatedToolOutput": new_out,

@@ -14,6 +14,9 @@ def main() -> int:
         return 0
     if not isinstance(payload, dict):
         return 0
+    # Observe-only mode never blocks a call — it just watches spend.
+    if str(os.environ.get("TOKENDOG_OBSERVE_ONLY")).strip().lower() in ("1", "true", "yes", "on"):
+        return 0
     try:
         from tokendog.budget import check
     except Exception:
