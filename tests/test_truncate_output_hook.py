@@ -13,8 +13,23 @@ def _run(mod, payload, monkeypatch, capsys):
     rc = mod.main()
     return rc, capsys.readouterr().out
 
+def test_default_is_off(tmp_path, monkeypatch, capsys):
+    # No TOKENDOG_TRUNCATE_MODE set → safe by default, output untouched, nothing recorded.
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    monkeypatch.delenv("TOKENDOG_TRUNCATE_MODE", raising=False)
+    monkeypatch.delenv("TOKENDOG_OBSERVE_ONLY", raising=False)
+    monkeypatch.setenv("TOKENDOG_MAX_LINES", "50")
+    mod = _load()
+    big = "\n".join(str(i) for i in range(1000))
+    rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big, "tool_name": "Bash"}, monkeypatch, capsys)
+    assert rc == 0 and out.strip() == ""
+    from tokendog.savings import savings_summary
+    assert savings_summary()["events"] == 0
+
+
 def test_large_output_truncated(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    monkeypatch.setenv("TOKENDOG_TRUNCATE_MODE", "enforce")
     monkeypatch.setenv("TOKENDOG_MAX_LINES", "50")
     mod = _load()
     big = "\n".join(str(i) for i in range(1000))

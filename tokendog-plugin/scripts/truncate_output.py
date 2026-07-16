@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """PostToolUse hook: cap oversized tool output. Degrades to pass-through on any error.
 
-Modes (env TOKENDOG_TRUNCATE_MODE, default "enforce"):
+SAFE BY DEFAULT: does nothing unless you opt in. Modes (env TOKENDOG_TRUNCATE_MODE):
+  off     — (DEFAULT) do nothing; never alters output.
+  shadow  — record what WOULD be saved but leave the output untouched (measure only).
   enforce — shorten oversized output (the model sees the shortened version).
-  shadow  — record what WOULD be saved but leave the output untouched.
-  off     — do nothing.
-Setting TOKENDOG_OBSERVE_ONLY=1 forces shadow mode (watch-only, never modifies calls).
+Setting TOKENDOG_OBSERVE_ONLY=1 forces shadow mode.
 Every truncation (enforced or shadow) is logged to the savings ledger."""
 import json
 import os
@@ -22,7 +22,7 @@ def main() -> int:
         return 0
     if not isinstance(payload, dict):
         return 0
-    mode = os.environ.get("TOKENDOG_TRUNCATE_MODE", "enforce").strip().lower()
+    mode = os.environ.get("TOKENDOG_TRUNCATE_MODE", "off").strip().lower()
     if _truthy(os.environ.get("TOKENDOG_OBSERVE_ONLY")):
         mode = "shadow"
     if mode == "off":

@@ -63,12 +63,29 @@ def doctor_report(cwd: str) -> str:
     tik = "available" if _encoding() else "MISSING (falling back to len/4) — run `pip install tiktoken`"
     glitch = os.path.join(cwd, ".glitch", "firmware", "firmware.db")
     glitch_status = "present" if os.path.exists(glitch) else "not found"
+
+    # Active-vs-off state for everything that can affect model output.
+    observe_only = str(os.environ.get("TOKENDOG_OBSERVE_ONLY")).strip().lower() in ("1", "true", "yes", "on")
+    trunc = os.environ.get("TOKENDOG_TRUNCATE_MODE", "off").strip().lower()
+    if observe_only:
+        trunc = "shadow (forced by TOKENDOG_OBSERVE_ONLY)"
+    try:
+        from .budget import load_budget
+        b = load_budget()
+        budget_on = any(v is not None for v in (b.daily_usd, b.session_usd))
+    except Exception:
+        budget_on = False
+    budget_state = "enforcing" if (budget_on and not observe_only) else ("set but observe-only" if budget_on else "off (no budget set)")
+
     return "\n".join([
         "TokenDog doctor",
         f"- state dir: {home}",
         f"- telemetry events recorded: {n_events}",
         f"- tiktoken: {tik}",
         f"- glitch firmware.db: {glitch_status} ({glitch})",
+        "- quality-affecting features (off unless you opt in):",
+        f"    - output truncation: {trunc}",
+        f"    - budget enforcement: {budget_state}",
     ])
 
 

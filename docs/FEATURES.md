@@ -42,7 +42,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | Ingestion (`ingest.py`) | Loads the sink + Glitch `firmware.db` `context_log` | Unified Claude + Glitch spend view | Passive |
 | Reporting CLI (`report.py`) | `cost` `doctor` `budget` `audit` `savings` `init` | One command line for all insight | Passive |
 | Budgets (`budget.py`) | Daily / session / alert limits + webhook | Spend guardrails (enforcement runs in the hook) | Passive |
-| Truncation logic (`truncate.py`) | Head+tail cap of oversized text | Shrinks bloated tool output re-sent as context | Active (Lever B) |
+| Truncation logic (`truncate.py`) | Head+tail cap of oversized text | Shrinks bloated tool output re-sent as context | Active (Lever B) — **off by default** |
 | Savings ledger (`savings.py`) | Records every truncation (enforce vs shadow) to a separate ledger | The with/without comparison, per call | Passive |
 | Templates (`templates.py`) | Idempotent CLAUDE.md / settings install with an extension marker | Drop-in frugal config that preserves your edits | Instruct |
 | Config (`config.py`) | Resolves state dir (`~/.tokendog`, override `TOKENDOG_HOME`) | Isolatable, testable state | Passive |
@@ -52,7 +52,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
 | `token_count` hook | Records tokens on every Pre/Post tool use, Stop, SessionStart | Automatic per-call telemetry | Passive |
-| `truncate_output` hook | Runs the truncation logic per call; supports `enforce` / `shadow` / `off` modes | Cuts context bloat; can watch-only first | Active (Lever B) |
+| `truncate_output` hook | Runs the truncation logic per call; `off` (default) / `shadow` / `enforce` | Cuts context bloat; opt-in, watch-only first | Active (Lever B) — **off by default** |
 | `budget_enforce` hook | PreToolUse deny when over budget; honors observe-only; fails open | Hard spend ceiling that never crashes a session | Active |
 | `session_summary` hook | End-of-session spend recap | Per-session cost awareness | Passive |
 | `budget_alert` hook | Webhook alert on threshold crossing | Team-level overspend notice | Passive |
@@ -116,12 +116,19 @@ Only active if you run the gate as a proxy in front of the API.
 
 ---
 
-## Safety posture
+## Safety posture — safe by default
 
-Only three features can change what the model sees: the `truncate_output` hook
-(Lever B), the `budget_enforce` hook (denies over budget), and the frugal
-`CLAUDE.md` / `tokendog-frugal` skill (Lever A). Everything else is pure measurement.
+A fresh install only measures and offers conservative guidance. Nothing silently
+alters tool output. The features that can change what the model sees are gated:
 
-Set `TOKENDOG_OBSERVE_ONLY=1` to run in watch-only mode: truncation records what it
-*would* cut without altering output, budget enforcement never denies, and the savings
-ledger (`tokendog report savings`) shows the projected with-vs-without comparison.
+| Feature | Effect | Default | Turn on with |
+|---|---|---|---|
+| `truncate_output` | Silently shortens oversized tool output (hard content loss) | **off** | `TOKENDOG_TRUNCATE_MODE=enforce` (or `shadow` to only measure) |
+| `budget_enforce` | Denies calls once over budget | **off** (no limit set → never denies) | `/tokendog:budget --set-daily N` |
+| `tokendog-frugal` / `tokendog-hygiene` skills | Bias the model toward frugal reads/searches (no content dropped) | **on** — conservative, quality-preserving guidance | (disable per Claude Code plugin/skill settings if unwanted) |
+
+Run `tokendog doctor` to see the live state of the quality-affecting features.
+
+`TOKENDOG_OBSERVE_ONLY=1` is an extra convenience switch: it forces truncation into
+`shadow` (measure-only) and stops budget enforcement from denying — useful for a timed
+"see the projected savings, change nothing" trial via `tokendog report savings`.

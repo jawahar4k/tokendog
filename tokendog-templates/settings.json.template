@@ -13,6 +13,7 @@
     "deny": []
   },
   "env": {
+    "TOKENDOG_TRUNCATE_MODE": "off",
     "TOKENDOG_MAX_LINES": "200",
     "TOKENDOG_MAX_BYTES": "50000"
   }
