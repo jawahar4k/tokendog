@@ -43,6 +43,27 @@ python -m benchmarks.run            # token-savings benchmark
 cd tokendog-gate && cargo test
 ```
 
+## Safe-by-default rollout
+
+A fresh install only **measures** (and gives conservative frugal/hygiene guidance) — it never
+silently alters tool output. Adopt the one content-altering feature, truncation, in three steps:
+
+```bash
+# 1. Observe — install and work normally. Zero content alteration.
+#    /plugin install ./tokendog-plugin   →   /tokendog:cost   (watch your spend)
+
+# 2. Measure — see what truncation WOULD cut, without changing anything:
+export TOKENDOG_TRUNCATE_MODE=shadow
+#    ... run some real sessions ...
+python -m tokendog.report savings        # projected with-vs-without, per tool/session
+
+# 3. Enforce — only if the projected cuts look safe, turn it on:
+export TOKENDOG_TRUNCATE_MODE=enforce
+```
+
+`tokendog doctor` shows the live state of every quality-affecting feature. See
+`docs/FEATURES.md` for the full safety posture.
+
 ## Works with Glitch
 
 TokenDog treats Glitch as a first-class second runtime: it ingests Glitch's `firmware.db` `context_log`
