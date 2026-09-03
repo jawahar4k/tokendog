@@ -20,7 +20,11 @@ def test_cost_summary_shape(tmp_path, monkeypatch):
 def test_format_rollup_is_markdown(tmp_path, monkeypatch):
     _seed(tmp_path, monkeypatch)
     out = report.format_rollup(report.cost_summary())
-    assert "| Group" in out and "claude-code" in out and "approxim" in out.lower()
+    assert "| Group" in out and "claude-code" in out
+    # The four billing buckets are shown, not one collapsed total.
+    assert "Cache write" in out and "Cache read" in out
+    # And the provenance of the cost figure is stated.
+    assert "authoritative" in out.lower()
 
 
 def test_doctor_mentions_home(tmp_path, monkeypatch):

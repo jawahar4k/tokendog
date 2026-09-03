@@ -35,11 +35,12 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
 | Telemetry event model (`event.py`) | `TokenEvent` schema with cross-runtime fields (runtime, pipeline, run_id, agent, cluster, tool, model) | One consistent record for both Claude Code & Glitch | Passive |
-| tiktoken approximation (`approx.py`) | Estimates tokens for any text | Per-call counts without API billing data | Passive |
+| Transcript reader (`transcripts.py`) | Reads **authoritative** per-turn `message.usage` from Claude Code transcripts, preserving the ephemeral 5m/1h cache split, `service_tier` and `inference_geo` | The cost path. One metered turn = one assistant record carrying `message.usage` | Passive |
+| tiktoken approximation (`approx.py`) | Estimates tokens for any text | Sizing tool payloads only — **not** a billing path | Passive |
 | JSONL sink (`sink.py`) | Appends events to a daily `.jsonl` file | Durable, greppable local audit trail | Passive |
-| SQLite cost backend (`backend.py`) | Grouped roll-ups (by runtime / tool / session / model) | Fast "where do my tokens go?" queries | Passive |
-| Pricing / cost (`pricing.py`) | Applies per-model dollar rates | Turns token counts into cost estimates | Passive |
-| Ingestion (`ingest.py`) | Loads the sink + Glitch `firmware.db` `context_log` | Unified Claude + Glitch spend view | Passive |
+| SQLite cost backend (`backend.py`) | Grouped roll-ups (by runtime / tool / session / model / source / tier / geo) | Fast "where do my tokens go?" queries | Passive |
+| Pricing / cost (`pricing.py`) | Prices all four buckets per model: fresh input, output, cache read (0.1×), cache write (1.25× at 5m / 2× at 1h) | Cache is ~85–93% of a real agent bill; pricing it is the difference between a right and a wrong number | Passive |
+| Ingestion (`ingest.py`) | Loads transcripts + the sink + Glitch `firmware.db` `context_log`; redacts file paths to basename at the emitter | Unified Claude + Glitch spend view, without leaking project/user/customer names | Passive |
 | Reporting CLI (`report.py`) | `cost` `doctor` `budget` `audit` `savings` `init` | One command line for all insight | Passive |
 | Budgets (`budget.py`) | Daily / session / alert limits + webhook | Spend guardrails (enforcement runs in the hook) | Passive |
 | Truncation logic (`truncate.py`) | Head+tail cap of oversized text | Shrinks bloated tool output re-sent as context | Active (Lever B) — **off by default** |
@@ -51,7 +52,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
-| `token_count` hook | Records tokens on every Pre/Post tool use, Stop, SessionStart | Automatic per-call telemetry | Passive |
+| `token_count` hook | Records **tool-payload volume** (`tool_payload_tokens`) on every Pre/Post tool use, Stop, SessionStart | Per-tool attribution. Deliberately not billable: those bytes are billed by the turn that carries them, so pricing them here would double-count | Passive |
 | `truncate_output` hook | Runs the truncation logic per call; `off` (default) / `shadow` / `enforce` | Cuts context bloat; opt-in, watch-only first | Active (Lever B) — **off by default** |
 | `budget_enforce` hook | PreToolUse deny when over budget; honors observe-only; fails open | Hard spend ceiling that never crashes a session | Active |
 | `session_summary` hook | End-of-session spend recap | Per-session cost awareness | Passive |

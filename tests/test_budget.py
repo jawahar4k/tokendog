@@ -1,6 +1,6 @@
 from tokendog import budget
 from tokendog.sink import write_event
-from tokendog.event import TokenEvent, RUNTIME_CLAUDE
+from tokendog.event import TokenEvent, RUNTIME_CLAUDE, SOURCE_TRANSCRIPT
 from datetime import datetime, timezone
 
 
@@ -10,8 +10,11 @@ def _today():
 
 def _seed(tmp_path, monkeypatch, itok, otok, model="sonnet", session="s"):
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    # Budgets are driven by authoritative usage: a hook event records tool
+    # payload volume and is deliberately not billable.
     write_event(TokenEvent(ts=_today()+"T00:00:00+00:00", session_id=session,
-                           runtime=RUNTIME_CLAUDE, event="PostToolUse",
+                           runtime=RUNTIME_CLAUDE, event="assistant-turn",
+                           source=SOURCE_TRANSCRIPT,
                            input_tokens=itok, output_tokens=otok, model=model))
 
 

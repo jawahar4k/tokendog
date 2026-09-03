@@ -45,8 +45,16 @@ Pytest resolves `src`, `tokendog-mcp-toolkit/py`, and `benchmarks` via `pyprojec
   intentional block is `budget_enforce`'s explicit PreToolUse deny (which itself fails open on error).
 - Every `TokenEvent` sets `runtime` = `"claude-code"` or `"glitch"`. Cross-runtime attribution fields
   (`runtime`, `pipeline`, `run_id`, `agent`, `cluster`) are part of the schema — don't drop them.
-- Claude Code token counts are **approximations** (tiktoken); Glitch counts are **authoritative**
-  (from its stop hook). Label approximate figures as such.
+- **Cost comes only from authoritative usage.** Claude Code transcripts (`message.usage`) and Glitch's
+  stop hook are authoritative and are what get priced. Hook events carry a tiktoken approximation of
+  tool-payload *volume* (`tool_payload_tokens`) and are never priced — those bytes are already billed
+  by the turn that carries them. `TokenEvent.source` records which is which.
+- **Never collapse a billing dimension the source already provides.** The ephemeral 5m/1h cache split
+  must survive ingestion: the two TTLs bill at different multipliers (1.25× vs 2× input), so the
+  `cache_creation_input_tokens` scalar alone cannot be priced exactly. Same for `service_tier` and
+  `inference_geo` — both affect price and neither is derivable downstream.
+- Price all four buckets (fresh input, output, cache read, cache write). Cache is the large majority
+  of a real agent bill; omitting it is not a rounding error.
 - TDD; small focused modules; commit after each green change.
 
 ## Status

@@ -2,15 +2,20 @@ from __future__ import annotations
 import argparse
 import os
 from .backend import LocalSQLiteBackend, QueryFilter
-from .ingest import ingest_sink, ingest_glitch_firmware
+from .ingest import ingest_sink, ingest_glitch_firmware, ingest_transcripts
 from .sink import read_events
 from .approx import _encoding
 from .config import tokendog_home
 from .templates import apply_templates, repo_templates_dir
 
 
-def cost_summary(group_by="runtime", since=None, until=None, glitch_db=None) -> dict:
+def cost_summary(group_by="runtime", since=None, until=None, glitch_db=None,
+                 transcript_root=None) -> dict:
     backend = LocalSQLiteBackend(path=":memory:")
+    # Transcripts and Glitch carry authoritative usage and are what gets priced.
+    # The hook sink is loaded too, but only contributes tool-payload volume —
+    # its bytes are already billed by the transcript, so it is never re-priced.
+    ingest_transcripts(backend, transcript_root)
     ingest_sink(backend)
     if glitch_db:
         ingest_glitch_firmware(backend, glitch_db)
@@ -20,16 +25,26 @@ def cost_summary(group_by="runtime", since=None, until=None, glitch_db=None) -> 
 
 
 def format_rollup(summary: dict) -> str:
+    """Render the four billing buckets, not one collapsed total.
+
+    Cache-write is the bucket that grows with context churn and is the one a
+    developer can actually move; a scalar total hides it.
+    """
     lines = [f"### TokenDog cost by {summary['group_by']}",
              "",
-             "| Group | Calls | In | Out | Est $ |",
-             "|---|--:|--:|--:|--:|"]
+             "| Group | Calls | Cache write | Cache read | Out | Fresh in | Est $ |",
+             "|---|--:|--:|--:|--:|--:|--:|"]
     for r in summary["rows"]:
-        lines.append("| {key} | {calls} | {input_tokens} | {output_tokens} | ${est_cost_usd:.4f} |".format(**r))
+        lines.append(
+            "| {key} | {calls} | {cache_creation_tokens} | {cache_read_tokens} | "
+            "{output_tokens} | {input_tokens} | ${est_cost_usd:.4f} |".format(**r))
     if len(lines) == 4:
-        lines.append("| _(no data yet)_ | | | | |")
+        lines.append("| _(no data yet)_ | | | | | | |")
     lines.append("")
-    lines.append("_Numbers are local tiktoken approximations, not authoritative billing._")
+    lines.append("_Cost is priced from authoritative per-turn usage (Claude Code "
+                 "transcripts, Glitch). Hook events contribute tool-payload volume "
+                 "only and are not priced — their bytes are already billed by the "
+                 "turn that carries them._")
     return "\n".join(lines)
 
 
@@ -58,11 +73,18 @@ def format_savings(s: dict) -> str:
 
 
 def doctor_report(cwd: str) -> str:
+    from .transcripts import transcript_root
     home = tokendog_home()
     n_events = sum(1 for _ in read_events())
     tik = "available" if _encoding() else "MISSING (falling back to len/4) — run `pip install tiktoken`"
     glitch = os.path.join(cwd, ".glitch", "firmware", "firmware.db")
     glitch_status = "present" if os.path.exists(glitch) else "not found"
+    troot = transcript_root()
+    if troot.exists():
+        n_transcripts = sum(1 for _ in troot.rglob("*.jsonl"))
+        transcript_status = f"{n_transcripts} file(s) at {troot}"
+    else:
+        transcript_status = f"NOT FOUND at {troot} — cost will read $0 without it"
 
     # Active-vs-off state for everything that can affect model output.
     observe_only = str(os.environ.get("TOKENDOG_OBSERVE_ONLY")).strip().lower() in ("1", "true", "yes", "on")
@@ -80,7 +102,8 @@ def doctor_report(cwd: str) -> str:
     return "\n".join([
         "TokenDog doctor",
         f"- state dir: {home}",
-        f"- telemetry events recorded: {n_events}",
+        f"- telemetry events recorded: {n_events} (hook volume; not billable)",
+        f"- claude code transcripts (authoritative cost): {transcript_status}",
         f"- tiktoken: {tik}",
         f"- glitch firmware.db: {glitch_status} ({glitch})",
         "- quality-affecting features (off unless you opt in):",

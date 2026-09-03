@@ -1,6 +1,7 @@
 import json, importlib.util, io, sys
 from pathlib import Path
 from tokendog.sink import read_events
+from tokendog.event import SOURCE_HOOK
 
 HOOK = Path(__file__).resolve().parents[1] / "tokendog-plugin" / "scripts" / "token_count.py"
 
@@ -25,7 +26,7 @@ def test_posttooluse_records_event(tmp_path, monkeypatch):
     assert len(events) == 1
     e = events[0]
     assert e.runtime == "claude-code" and e.event == "PostToolUse"
-    assert e.tool == "Read" and e.output_tokens > 0
+    assert e.tool == "Read" and e.tool_payload_tokens > 0
 
 def test_bad_stdin_never_crashes(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
@@ -34,7 +35,7 @@ def test_bad_stdin_never_crashes(tmp_path, monkeypatch):
     assert mod.main() == 0
     assert list(read_events()) == []
 
-def test_pretooluse_only_counts_input(tmp_path, monkeypatch):
+def test_pretooluse_measures_tool_input(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
     mod = _load()
     rc = _run(mod, {"hook_event_name": "PreToolUse", "session_id": "s2",
@@ -43,10 +44,9 @@ def test_pretooluse_only_counts_input(tmp_path, monkeypatch):
     assert rc == 0
     events = list(read_events())
     assert len(events) == 1
-    assert events[0].input_tokens > 0
-    assert events[0].output_tokens == 0
+    assert events[0].tool_payload_tokens > 0
 
-def test_posttooluse_only_counts_output(tmp_path, monkeypatch):
+def test_posttooluse_measures_tool_output(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
     mod = _load()
     rc = _run(mod, {"hook_event_name": "PostToolUse", "session_id": "s3",
@@ -57,18 +57,24 @@ def test_posttooluse_only_counts_output(tmp_path, monkeypatch):
     assert rc == 0
     events = list(read_events())
     assert len(events) == 1
-    assert events[0].output_tokens > 0
-    assert events[0].input_tokens == 0
+    assert events[0].tool_payload_tokens > 0
 
-def test_no_double_count_across_pre_and_post(tmp_path, monkeypatch):
+def test_hook_never_writes_billable_token_fields(tmp_path, monkeypatch):
+    """Regression: PostToolUse used to write the tool RESULT into
+    output_tokens, which billed it at the output rate ($25/MTok on Opus) even
+    though those bytes are input-side context the transcript already bills."""
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
     mod = _load()
-    payload = {"tool_input": {"file_path": "d.py"}, "tool_output": "line\n" * 10}
+    payload = {"tool_input": {"file_path": "d.py"}, "tool_output": "line\n" * 100}
     _run(mod, {**payload, "hook_event_name": "PreToolUse", "session_id": "s4"}, monkeypatch)
     _run(mod, {**payload, "hook_event_name": "PostToolUse", "session_id": "s4"}, monkeypatch)
     events = list(read_events())
     assert len(events) == 2
-    pre = next(e for e in events if e.event == "PreToolUse")
-    post = next(e for e in events if e.event == "PostToolUse")
-    assert pre.input_tokens > 0 and pre.output_tokens == 0
-    assert post.output_tokens > 0 and post.input_tokens == 0
+    for e in events:
+        assert e.source == SOURCE_HOOK
+        assert not e.is_authoritative
+        assert e.input_tokens == 0
+        assert e.output_tokens == 0
+        assert e.cache_read_tokens == 0
+        assert e.cache_creation_tokens == 0
+        assert e.tool_payload_tokens > 0

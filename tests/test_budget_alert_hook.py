@@ -1,7 +1,7 @@
 import json, importlib.util, io, sys
 from pathlib import Path
 from tokendog.sink import write_event
-from tokendog.event import TokenEvent, RUNTIME_CLAUDE
+from tokendog.event import TokenEvent, RUNTIME_CLAUDE, SOURCE_TRANSCRIPT
 from tokendog import budget
 from datetime import datetime, timezone
 
@@ -16,7 +16,8 @@ def test_posts_when_over_alert(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     write_event(TokenEvent(ts=today+"T00:00:00+00:00", session_id="s", runtime=RUNTIME_CLAUDE,
-                           event="PostToolUse", input_tokens=1_000_000, model="sonnet"))
+                           event="assistant-turn", source=SOURCE_TRANSCRIPT,
+                           input_tokens=1_000_000, model="sonnet"))
     budget.save_budget(budget.Budget(alert_usd=1.0, webhook_url="http://hook.local/x"))
     mod = _load()
     posted = {}
