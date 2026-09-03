@@ -62,7 +62,12 @@ python -m tokendog.report savings        # projected with-vs-without, per tool/s
 export TOKENDOG_TRUNCATE_MODE=enforce
 ```
 
-`tokendog doctor` shows the live state of every quality-affecting feature. See
+`tokendog doctor` shows the live state of every quality-affecting feature, plus sink health.
+
+The telemetry sink is bounded by default: `TOKENDOG_MAX_SINK_MB` (64) caps each day's file and
+`TOKENDOG_RETENTION_DAYS` (30) prunes old ones. If the sink ever stops accepting writes — full
+disk, read-only mount, cap reached — a SessionStart hook says so instead of letting the cost
+reports keep rendering confident numbers from stale data. See
 `docs/FEATURES.md` for the full safety posture.
 
 ## Works with Glitch

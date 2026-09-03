@@ -37,7 +37,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | Telemetry event model (`event.py`) | `TokenEvent` schema with cross-runtime fields (runtime, pipeline, run_id, agent, cluster, tool, model) | One consistent record for both Claude Code & Glitch | Passive |
 | Transcript reader (`transcripts.py`) | Reads **authoritative** per-turn `message.usage` from Claude Code transcripts, preserving the ephemeral 5m/1h cache split, `service_tier` and `inference_geo` | The cost path. One metered turn = one assistant record carrying `message.usage` | Passive |
 | tiktoken approximation (`approx.py`) | Estimates tokens for any text | Sizing tool payloads only — **not** a billing path | Passive |
-| JSONL sink (`sink.py`) | Appends events to a daily `.jsonl` file | Durable, greppable local audit trail | Passive |
+| JSONL sink (`sink.py`) | Appends events to a daily `.jsonl` file, with a per-day size cap (`TOKENDOG_MAX_SINK_MB`, default 64) and a retention window (`TOKENDOG_RETENTION_DAYS`, default 30); records every failed write to a health file | Durable, greppable local audit trail that cannot grow without bound or stop silently | Passive |
 | SQLite cost backend (`backend.py`) | Grouped roll-ups (by runtime / tool / session / model / source / tier / geo) | Fast "where do my tokens go?" queries | Passive |
 | Pricing / cost (`pricing.py`) | Prices all four buckets per model: fresh input, output, cache read (0.1×), cache write (1.25× at 5m / 2× at 1h) | Cache is ~85–93% of a real agent bill; pricing it is the difference between a right and a wrong number | Passive |
 | Ingestion (`ingest.py`) | Loads transcripts + the sink + Glitch `firmware.db` `context_log`; redacts file paths to basename at the emitter | Unified Claude + Glitch spend view, without leaking project/user/customer names | Passive |
@@ -58,6 +58,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | `budget_enforce` hook | PreToolUse deny when over budget; honors observe-only; fails open | Hard spend ceiling that never crashes a session | Active |
 | `session_summary` hook | End-of-session spend recap | Per-session cost awareness | Passive |
 | `budget_alert` hook | Webhook alert on threshold crossing | Team-level overspend notice | Passive |
+| `sink_health` hook | SessionStart warning when the sink has stopped accepting writes | The other hooks swallow every exception so they never crash a session; this is the one place a broken sink is said out loud | Passive |
 | `tokendog-cost` MCP server | Exposes cost data to the agent | Ask "what have I spent?" in-session | Passive |
 | `tokendog-frugal` skill | Always-on terseness guidance to the model | Fewer output tokens (Lever A) | Instruct |
 | `tokendog-hygiene` skill | Session-hygiene practices (clear context, scope tools) | Avoids context bloat | Instruct |

@@ -117,6 +117,7 @@ def format_bands(s: dict) -> str:
 
 def doctor_report(cwd: str) -> str:
     from .transcripts import transcript_root
+    from .sink import sink_health, retention_days, max_sink_bytes
     home = tokendog_home()
     n_events = sum(1 for _ in read_events())
     tik = "available" if _encoding() else "MISSING (falling back to len/4) — run `pip install tiktoken`"
@@ -128,6 +129,15 @@ def doctor_report(cwd: str) -> str:
         transcript_status = f"{n_transcripts} file(s) at {troot}"
     else:
         transcript_status = f"NOT FOUND at {troot} — cost will read $0 without it"
+
+    h = sink_health()
+    if h["degraded"]:
+        sink_status = (f"DEGRADED — {h['failures']} failed write(s) across "
+                       f"{h['sessions']}{'+' if h['sessions_capped'] else ''} session(s) "
+                       f"since {h['first_ts']}; last reason: {h['last_reason']}")
+    else:
+        sink_status = (f"ok (cap {max_sink_bytes() // (1024 * 1024)} MB/day, "
+                       f"retention {retention_days()} days)")
 
     # Active-vs-off state for everything that can affect model output.
     observe_only = str(os.environ.get("TOKENDOG_OBSERVE_ONLY")).strip().lower() in ("1", "true", "yes", "on")
@@ -146,6 +156,7 @@ def doctor_report(cwd: str) -> str:
         "TokenDog doctor",
         f"- state dir: {home}",
         f"- telemetry events recorded: {n_events} (hook volume; not billable)",
+        f"- sink health: {sink_status}",
         f"- claude code transcripts (authoritative cost): {transcript_status}",
         f"- tiktoken: {tik}",
         f"- glitch firmware.db: {glitch_status} ({glitch})",
