@@ -44,6 +44,20 @@ class TokenEvent:
     # carried verbatim from the source rather than assumed.
     service_tier: str | None = None
     inference_geo: str | None = None
+    # Derived, for band roll-ups. Context is what the model had to be given
+    # for this turn (cache_read + cache_creation + fresh input); output is
+    # excluded because it came back rather than being carried. Set only for
+    # metered turns — a hook event measures a tool payload, and a Glitch
+    # context-load is not a turn, so both leave `band` as None and are
+    # skipped by band reporting rather than inventing turns.
+    context_tokens: int = 0
+    band: str | None = None
+    # One transcript file == one context that grew on its own.
+    # NOT the same as session_id: a resumed session and its `agent-*` subagent
+    # transcripts all carry the PARENT's sessionId, so grouping context peaks
+    # by session_id merges separate contexts into one. Keep both — session_id
+    # for spend attribution, transcript_id for "how big did a context get".
+    transcript_id: str | None = None
     tool: str | None = None
     model: str | None = None
     user: str | None = None
@@ -53,9 +67,21 @@ class TokenEvent:
     cluster: str | None = None
     file: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.source == SOURCE_TRANSCRIPT:
+            from .bands import band_for, context_tokens as _ctx
+            self.context_tokens = _ctx(self.input_tokens, self.cache_read_tokens,
+                                       self.cache_creation_tokens)
+            self.band = band_for(self.context_tokens)
+
     @property
     def is_authoritative(self) -> bool:
         return self.source in AUTHORITATIVE_SOURCES
+
+    @property
+    def is_turn(self) -> bool:
+        """A metered turn with a context window of its own."""
+        return self.band is not None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), separators=(",", ":"), sort_keys=True)

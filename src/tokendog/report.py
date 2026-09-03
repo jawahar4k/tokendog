@@ -72,6 +72,49 @@ def format_savings(s: dict) -> str:
     return "\n".join(lines)
 
 
+def band_report_data(transcript_root=None) -> dict:
+    from itertools import chain
+    from .bands import band_summary
+    from .transcripts import read_transcripts
+    return band_summary(chain(read_transcripts(transcript_root), read_events()))
+
+
+def format_bands(s: dict) -> str:
+    """Show where the tokens actually are: concentrated in the big turns.
+
+    Roll-ups by runtime/tool/session/model answer "who spent it". This answers
+    "how big was the context when it was spent" — the number a developer can
+    act on, because everything in a context is re-read on every later turn.
+    """
+    lines = ["### TokenDog context bands", ""]
+    if not s["turns"]:
+        lines.append("_No metered turns found. Context bands are read from Claude Code "
+                     "transcripts — run `tokendog doctor` to check they were located._")
+        return "\n".join(lines)
+
+    lines.append(f"{s['turns']:,} turns · {s['total_context_tokens']:,} context tokens")
+    lines.append("")
+    lines.append("| Band | Turns | % turns | Context tokens | % tokens |")
+    lines.append("|---|--:|--:|--:|--:|")
+    for r in s["rows"]:
+        lines.append(f"| {r['band']} | {r['turns']:,} | {r['pct_turns']:.1f}% | "
+                     f"{r['context_tokens']:,} | {r['pct_tokens']:.1f}% |")
+
+    c = s["concentration"]
+    lines.append("")
+    lines.append(f"**{c['pct_turns']:.1f}% of turns carry {c['pct_tokens']:.1f}% of "
+                 f"context tokens** (turns at or above {c['threshold']:,} tokens).")
+
+    p = s["peak_context"]
+    lines.append("")
+    lines.append(f"Peak context per {p['unit']} — p50 {p['p50']:,} · p90 {p['p90']:,} · "
+                 f"max {p['max']:,} (across {p['count']:,} {p['unit']}s)")
+    lines.append("")
+    lines.append("_Context = cache read + cache write + fresh input, per metered turn. "
+                 "Output is excluded: it came back, it was not carried._")
+    return "\n".join(lines)
+
+
 def doctor_report(cwd: str) -> str:
     from .transcripts import transcript_root
     home = tokendog_home()
@@ -136,6 +179,8 @@ def main(argv=None) -> int:
 
     sub.add_parser("savings")
 
+    sub.add_parser("bands")
+
     i = sub.add_parser("init")
     i.add_argument("--target", default=".")
     i.add_argument("--force", action="store_true")
@@ -173,6 +218,8 @@ def main(argv=None) -> int:
     elif args.cmd == "savings":
         from .savings import savings_summary
         print(format_savings(savings_summary()))
+    elif args.cmd == "bands":
+        print(format_bands(band_report_data()))
     elif args.cmd == "init":
         written = apply_templates(repo_templates_dir(), args.target, force=args.force)
         for p in written:

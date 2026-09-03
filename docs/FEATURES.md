@@ -41,7 +41,8 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | SQLite cost backend (`backend.py`) | Grouped roll-ups (by runtime / tool / session / model / source / tier / geo) | Fast "where do my tokens go?" queries | Passive |
 | Pricing / cost (`pricing.py`) | Prices all four buckets per model: fresh input, output, cache read (0.1×), cache write (1.25× at 5m / 2× at 1h) | Cache is ~85–93% of a real agent bill; pricing it is the difference between a right and a wrong number | Passive |
 | Ingestion (`ingest.py`) | Loads transcripts + the sink + Glitch `firmware.db` `context_log`; redacts file paths to basename at the emitter | Unified Claude + Glitch spend view, without leaking project/user/customer names | Passive |
-| Reporting CLI (`report.py`) | `cost` `doctor` `budget` `audit` `savings` `init` | One command line for all insight | Passive |
+| Context bands (`bands.py`) | Buckets every metered turn by context size (cache read + cache write + fresh input), reports concentration and peak context per transcript | Answers "how big was the context when it was spent" — the dimension runtime/tool/session/model cannot express | Passive |
+| Reporting CLI (`report.py`) | `cost` `doctor` `budget` `audit` `savings` `bands` `init` | One command line for all insight | Passive |
 | Budgets (`budget.py`) | Daily / session / alert limits + webhook | Spend guardrails (enforcement runs in the hook) | Passive |
 | Truncation logic (`truncate.py`) | Head+tail cap of oversized text | Shrinks bloated tool output re-sent as context | Active (Lever B) — **off by default** |
 | Savings ledger (`savings.py`) | Records every truncation (enforce vs shadow) to a separate ledger | The with/without comparison, per call | Passive |
@@ -60,7 +61,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | `tokendog-cost` MCP server | Exposes cost data to the agent | Ask "what have I spent?" in-session | Passive |
 | `tokendog-frugal` skill | Always-on terseness guidance to the model | Fewer output tokens (Lever A) | Instruct |
 | `tokendog-hygiene` skill | Session-hygiene practices (clear context, scope tools) | Avoids context bloat | Instruct |
-| Slash commands | `/tokendog:cost` `:doctor` `:budget` `:audit` `:init` | Manual control surface | Passive |
+| Slash commands | `/tokendog:cost` `:doctor` `:budget` `:bands` `:audit` `:init` | Manual control surface | Passive |
 | Glitch stop hook + `tokendog-stop.sh` | Records authoritative Glitch token counts; shell wrapper needs no Python edit | First-class Glitch support | Passive |
 
 ## Layer 3 — Config templates (`tokendog-templates/`)

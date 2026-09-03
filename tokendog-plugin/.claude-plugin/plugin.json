@@ -9,13 +9,16 @@
     "./commands/tokendog-cost.md",
     "./commands/tokendog-doctor.md",
     "./commands/tokendog-budget.md",
+    "./commands/tokendog-bands.md",
     "./commands/tokendog-audit.md",
     "./commands/tokendog-init.md"
   ],
   "mcpServers": {
     "tokendog-cost": {
       "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/mcpServers/tokendog-cost/server.py"],
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/mcpServers/tokendog-cost/server.py"
+      ],
       "cwd": "${CLAUDE_PROJECT_DIR}"
     }
   }

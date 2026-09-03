@@ -55,7 +55,8 @@ def split_cache_creation(usage: dict) -> tuple[int, int, int]:
     return total, five_m, one_h
 
 
-def event_from_record(record: dict, *, session_id: str | None = None) -> TokenEvent | None:
+def event_from_record(record: dict, *, session_id: str | None = None,
+                      transcript_id: str | None = None) -> TokenEvent | None:
     """Build a TokenEvent from one transcript record, or None if it is not a turn."""
     if not isinstance(record, dict):
         return None
@@ -70,6 +71,7 @@ def event_from_record(record: dict, *, session_id: str | None = None) -> TokenEv
     return TokenEvent(
         ts=record.get("timestamp") or "",
         session_id=record.get("sessionId") or session_id or "unknown",
+        transcript_id=transcript_id or session_id,
         runtime=RUNTIME_CLAUDE,
         event="assistant-turn",
         source=SOURCE_TRANSCRIPT,
@@ -106,7 +108,8 @@ def read_transcript(path) -> Iterator[TokenEvent]:
                 record = json.loads(line)
             except (json.JSONDecodeError, TypeError, ValueError):
                 continue
-            event = event_from_record(record, session_id=session_id)
+            event = event_from_record(record, session_id=session_id,
+                                      transcript_id=session_id)
             if event is not None:
                 yield event
 

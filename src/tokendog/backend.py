@@ -8,7 +8,7 @@ from .config import db_path
 
 _ALLOWED_GROUP = {"runtime", "user", "tool", "model", "pipeline",
                   "day", "session_id", "agent", "cluster", "source",
-                  "service_tier", "inference_geo"}
+                  "service_tier", "inference_geo", "band", "transcript_id"}
 
 @dataclass
 class QueryFilter:
@@ -46,7 +46,8 @@ class CostBackend(Protocol):
 _COLUMNS = ("ts", "session_id", "runtime", "event", "input_tokens", "output_tokens",
             "cache_read_tokens", "cache_creation_tokens", "cache_creation_5m_tokens",
             "cache_creation_1h_tokens", "tool_payload_tokens", "source",
-            "service_tier", "inference_geo", "tool", "model", "user",
+            "service_tier", "inference_geo", "context_tokens", "band",
+            "transcript_id", "tool", "model", "user",
             "pipeline", "run_id", "agent", "cluster", "file")
 
 def _col_def(c: str) -> str:

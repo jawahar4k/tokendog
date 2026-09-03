@@ -37,7 +37,8 @@ python -m benchmarks.run            # token-savings benchmark
 #   /plugin install ./tokendog-plugin
 #   tokendog init                    # drop frugal CLAUDE.md + settings into your repo
 #   ... run a session ...
-#   /tokendog:cost                   # see your spend
+#   /tokendog:cost                   # see your spend (4 buckets, not one total)
+#   /tokendog:bands                  # see WHERE the tokens are (context size)
 
 # Optional Rust gate:
 cd tokendog-gate && cargo test
