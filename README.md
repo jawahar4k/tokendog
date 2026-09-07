@@ -72,6 +72,18 @@ disk, read-only mount, cap reached — a SessionStart hook says so instead of le
 reports keep rendering confident numbers from stale data. See
 `docs/FEATURES.md` for the full safety posture.
 
+### Which Python runs the hooks
+
+Hooks and the MCP server are launched as `python3 <script>`, and `python3` is whatever is first on
+PATH — often *not* the environment `pip install tokendog` wrote to. The hooks find an interpreter
+that can import `tokendog` (a `$VIRTUAL_ENV`, a `.venv/` beside your project, the `tokendog`
+console script's own interpreter) and re-exec under it, caching the answer in
+`~/.tokendog/interpreter`. Set `TOKENDOG_PYTHON` to override.
+
+If nothing on the machine can import `tokendog`, the SessionStart hook says so. It has to: every
+other hook fails open and exits 0, so without that message a wrong interpreter looks exactly like
+a quiet, well-behaved plugin — one that records nothing and reports `$0.00` forever.
+
 ## Works with Glitch
 
 TokenDog treats Glitch as a first-class second runtime: it ingests Glitch's `firmware.db` `context_log`

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "TokenDog — watch and reduce Claude Code / Glitch token spend"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-dependencies = ["tiktoken>=0.7", "mcp>=1.2,<2"]
+dependencies = ["tiktoken>=0.7", "mcp>=1.2"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

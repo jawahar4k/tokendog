@@ -10,10 +10,42 @@ place that says so out loud.
 Emits nothing when the sink is healthy, and nothing on any error.
 """
 import json
+import os
 import sys
+
+# Hooks run under whatever `python3` is first on PATH, which is often not the
+# environment tokendog was installed into. _bootstrap re-execs us under one
+# that works; without it the ImportError below is swallowed and the hook
+# silently records nothing forever. Must run before stdin is read.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from _bootstrap import ensure_tokendog
+except Exception:  # pragma: no cover - bootstrap absent; behave as before
+    def ensure_tokendog() -> bool:
+        return True
+
+
+def _no_tokendog() -> int:
+    """No interpreter on this machine can import tokendog.
+
+    This is the failure the other hooks cannot report: they swallow it and exit
+    0, so the plugin appears installed and healthy while recording nothing at
+    all. Say it once, here, at SessionStart.
+    """
+    try:
+        print(json.dumps({"systemMessage":
+            "TokenDog: the hook interpreter (" + sys.executable + ") cannot "
+            "import tokendog, so NO telemetry is being recorded and cost "
+            "reports will read $0.00. Fix: `pip install tokendog` into that "
+            "interpreter, or set TOKENDOG_PYTHON to one that has it."}))
+    except Exception:
+        pass
+    return 0
 
 
 def main() -> int:
+    if not ensure_tokendog():
+        return _no_tokendog()
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw and raw.strip() else {}

@@ -58,7 +58,8 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | `budget_enforce` hook | PreToolUse deny when over budget; honors observe-only; fails open | Hard spend ceiling that never crashes a session | Active |
 | `session_summary` hook | End-of-session spend recap | Per-session cost awareness | Passive |
 | `budget_alert` hook | Webhook alert on threshold crossing | Team-level overspend notice | Passive |
-| `sink_health` hook | SessionStart warning when the sink has stopped accepting writes | The other hooks swallow every exception so they never crash a session; this is the one place a broken sink is said out loud | Passive |
+| `sink_health` hook | SessionStart warning when the sink has stopped accepting writes, **or when no interpreter on the machine can import `tokendog`** | The other hooks swallow every exception so they never crash a session; this is the one place a broken sink — or a plugin recording nothing at all — is said out loud | Passive |
+| Interpreter bootstrap (`_bootstrap.py`) | Re-execs hooks and the MCP server under a Python that can import `tokendog` (`TOKENDOG_PYTHON`, `$VIRTUAL_ENV`, a project `.venv/`, the `tokendog` console script), caching the result in `~/.tokendog/interpreter` | `python3` is rarely the env pip installed into. Without this the ImportError is swallowed and the plugin silently records nothing; costs one probe, once, and only after the default interpreter has already failed | Passive |
 | `tokendog-cost` MCP server | Exposes cost data to the agent | Ask "what have I spent?" in-session | Passive |
 | `tokendog-frugal` skill | Always-on terseness guidance to the model | Fewer output tokens (Lever A) | Instruct |
 | `tokendog-hygiene` skill | Session-hygiene practices (clear context, scope tools) | Avoids context bloat | Instruct |

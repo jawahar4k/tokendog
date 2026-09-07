@@ -1,5 +1,7 @@
-import json, importlib.util
+import json, importlib.util, sys, types
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 ROOT = REPO / "tokendog-plugin"
@@ -64,3 +66,64 @@ def test_server_module_imports_and_exposes_tools():
     assert hasattr(mod, "mcp")
     assert callable(mod.cost_summary)
     assert callable(mod.doctor)
+
+
+SERVER = ROOT / "mcpServers" / "tokendog-cost" / "server.py"
+
+
+class _StubServer:
+    """Stands in for whichever high-level server class the SDK exposes."""
+
+    def __init__(self, name, **kw):
+        self.name = name
+
+    def tool(self):
+        def decorate(fn):
+            return fn
+        return decorate
+
+
+def _load_server_with(monkeypatch, *, mcpserver: bool):
+    """Import server.py against a stubbed SDK of one major version.
+
+    mcp 2.x removed `mcp.server.fastmcp` outright, so a real both-versions test
+    cannot be done in one environment — but the branch that picks between them
+    can be, and that branch is the whole fix.
+    """
+    pkg = types.ModuleType("mcp")
+    server_mod = types.ModuleType("mcp.server")
+    pkg.server = server_mod
+    monkeypatch.setitem(sys.modules, "mcp", pkg)
+    monkeypatch.setitem(sys.modules, "mcp.server", server_mod)
+    if mcpserver:  # mcp 2.x: MCPServer present, fastmcp gone
+        server_mod.MCPServer = _StubServer
+        monkeypatch.delitem(sys.modules, "mcp.server.fastmcp", raising=False)
+    else:  # mcp 1.x: no MCPServer, FastMCP under the old path
+        fastmcp = types.ModuleType("mcp.server.fastmcp")
+        fastmcp.FastMCP = _StubServer
+        server_mod.fastmcp = fastmcp
+        monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp)
+    spec = importlib.util.spec_from_file_location("tokendog_cost_server_probe", SERVER)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("mcpserver", [True, False], ids=["mcp2", "mcp1"])
+def test_server_builds_on_either_sdk_major(monkeypatch, mcpserver):
+    """`mcp>=1.2` is unbounded again, so both majors have to work.
+
+    Pinning `<2` was the stopgap; a plugin should not dictate which SDK major
+    the host environment installs. Verified against real mcp 1.28.1 and 2.1.1.
+    """
+    mod = _load_server_with(monkeypatch, mcpserver=mcpserver)
+    assert isinstance(mod.mcp, _StubServer)
+    assert mod.mcp.name == "tokendog-cost"
+    assert callable(mod.cost_summary) and callable(mod.doctor)
+
+
+def test_dependency_pin_allows_mcp_2():
+    """A `<2` cap would silently re-break what this branch fixed."""
+    pyproject = (REPO / "pyproject.toml").read_text()
+    line = next(l for l in pyproject.splitlines() if l.startswith("dependencies"))
+    assert "mcp>=1.2" in line and "<2" not in line

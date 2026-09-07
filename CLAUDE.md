@@ -55,7 +55,17 @@ Pytest resolves `src`, `tokendog-mcp-toolkit/py`, and `benchmarks` via `pyprojec
   `inference_geo` — both affect price and neither is derivable downstream.
 - Price all four buckets (fresh input, output, cache read, cache write). Cache is the large majority
   of a real agent bill; omitting it is not a rounding error.
-- TDD; small focused modules; commit after each green change.
+- **A hook that fails open must still be observable.** Hooks exit 0 and emit nothing on error, so
+  every failure mode they swallow needs somewhere that reports it — otherwise "broken" and
+  "healthy" look identical. `sink_health` (SessionStart) is that place: it covers a dead sink and
+  an interpreter that cannot import `tokendog`. Adding a new swallowed failure means adding it there.
+- **Never assume `python3` is the environment tokendog was installed into.** Hook and MCP entry
+  points go through `scripts/_bootstrap.py`, which re-execs under a working interpreter before
+  reading stdin (a re-exec inherits an unread fd 0; it cannot put back consumed bytes).
+- The MCP server supports both `mcp` majors — `mcp.server.MCPServer` (2.x) falling back to
+  `mcp.server.fastmcp.FastMCP` (1.x). A plugin should not dictate the host's SDK major.
+- TDD; small focused modules; commit after each green change. When a test encodes a bug's absence,
+  verify it FAILS with the fix reverted — this repo has shipped green suites over broken code.
 
 ## Status
 
