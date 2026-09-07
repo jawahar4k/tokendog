@@ -177,6 +177,66 @@ def position_curve(root=None, project=None) -> dict:
     return {"buckets": out, "ratio": ratio}
 
 
+# A 5-minute cache costs 1.25x input to write, a 1-hour cache 2x. The 1h TTL is
+# only worth its premium if turns are far enough apart that a 5m cache would
+# have died and forced a full prefix rebuild. That is an empirical question and
+# the answer is not obvious: on a fast agent loop the gaps are seconds, which
+# argues for 5m — until you price the handful of long pauses, which do not.
+FIVE_MIN, ONE_HOUR = 300.0, 3600.0
+
+
+def cache_efficiency(root=None, project=None, model="opus") -> dict:
+    """Is the cache earning its keep, and is the TTL the right one?
+
+    Answers with the counterfactual rather than the ratio: what the same work
+    would have cost on the other TTL, including the rebuilds that TTL would
+    have forced. A write:read ratio alone looks alarming early in a session and
+    tells you nothing about what to do.
+    """
+    from datetime import datetime
+    from .pricing import (CACHE_WRITE_5M_MULTIPLIER, PRICES, estimate_cost)
+
+    base = Path(root).expanduser() if root is not None else transcript_root()
+    if not base.exists():
+        return {}
+    five = one = 0
+    reads = 0
+    rebuild_tokens = 0
+    expiring_gaps = 0
+    for jf in sorted(base.rglob("*.jsonl")):
+        prev = None
+        for e in read_transcript(jf):
+            if project and e.project != project:
+                continue
+            five += e.cache_creation_5m_tokens
+            one += e.cache_creation_1h_tokens
+            reads += e.cache_read_tokens
+            try:
+                ts = datetime.fromisoformat(e.ts)
+            except (TypeError, ValueError):
+                continue
+            if prev is not None:
+                gap = (ts - prev).total_seconds()
+                if FIVE_MIN < gap <= ONE_HOUR:
+                    # A 5m cache is dead here and a 1h cache is not, so this is
+                    # exactly the prefix a downgrade would have to rebuild.
+                    expiring_gaps += 1
+                    rebuild_tokens += e.cache_read_tokens
+            prev = ts
+
+    if not (five + one):
+        return {}
+    actual = estimate_cost(model=model, cache_creation_5m_tokens=five,
+                           cache_creation_1h_tokens=one)
+    all_five = estimate_cost(model=model, cache_creation_5m_tokens=five + one)
+    rebuilds = (rebuild_tokens / 1_000_000) * PRICES[model][0] * CACHE_WRITE_5M_MULTIPLIER
+    return {"write_5m": five, "write_1h": one, "reads": reads,
+            "actual_usd": actual, "all_5m_usd": all_five,
+            "rebuild_usd": rebuilds, "expiring_gaps": expiring_gaps,
+            "net_usd": (all_five + rebuilds) - actual,
+            "write_read_pct": ((five + one) / reads * 100) if reads else None}
+
+
 def compare(before: dict, after: dict) -> dict:
     """Percentage change between two tool_summary results."""
     def delta(a, b):

@@ -128,3 +128,42 @@ def test_cli_effect_runs(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TOKENDOG_TRANSCRIPT_ROOT", str(tmp_path / "empty"))
     assert report.main(["effect"]) == 0
     assert "intervention ledger" in capsys.readouterr().out
+
+
+def _turn(ts, *, read=0, w5=0, w1=0):
+    usage = {"cache_read_input_tokens": read,
+             "cache_creation": {"ephemeral_5m_input_tokens": w5,
+                                "ephemeral_1h_input_tokens": w1}}
+    return json.dumps({"timestamp": ts, "sessionId": "s", "cwd": "/w/alpha",
+                       "type": "assistant",
+                       "message": {"model": "opus", "usage": usage}})
+
+
+def test_ttl_verdict_uses_the_counterfactual_not_the_ratio(tmp_path):
+    """Turns seconds apart never expire a 5m cache, so paying the 2x 1h
+    premium on every write is pure loss — and the report must say the shorter
+    TTL is cheaper."""
+    lines = [_turn(f"2026-09-06T00:00:{i:02d}+00:00", read=1_000_000, w1=100_000)
+             for i in range(0, 50, 5)]
+    root = _write(tmp_path, *lines)
+    c = effect.cache_efficiency(root)
+    assert c["expiring_gaps"] == 0
+    assert c["net_usd"] < 0, "no gaps expire, so 5m must be strictly cheaper"
+
+
+def test_long_pauses_justify_the_one_hour_premium(tmp_path):
+    """With gaps in the 5-60 minute window a 5m cache dies and the whole prefix
+    is rebuilt. The premium then buys something, and a report that only looked
+    at the write multiplier would recommend exactly the wrong change."""
+    lines = [_turn(f"2026-09-06T{h:02d}:00:00+00:00", read=50_000_000, w1=10_000)
+             for h in range(0, 10)]
+    root = _write(tmp_path, *lines)
+    c = effect.cache_efficiency(root)
+    assert c["expiring_gaps"] > 0
+    assert c["net_usd"] > 0, "rebuilds must outweigh the premium here"
+
+
+def test_cache_section_is_absent_when_there_are_no_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKENDOG_TRANSCRIPT_ROOT", str(tmp_path / "empty"))
+    out = report.format_effect(report.effect_data())
+    assert "Cache TTL" not in out

@@ -103,3 +103,20 @@ def test_carrying_beats_generating_after_fifty_turns_on_opus():
     assert break_even == 50, (
         f"docs say 50 turns; the rate table now says {break_even:g}. "
         "Update README.md and docs/FEATURES.md together with this test.")
+
+
+def test_init_template_routes_to_a_current_model():
+    """`tokendog init` writes a model default, which is the single biggest
+    reduction lever TokenDog ships — Sonnet is 40% cheaper than Opus across all
+    four buckets. It was pinned to claude-sonnet-4-6 long after Sonnet 5 shipped
+    at the same price, so the one feature that could deliver that was routing to
+    a superseded model."""
+    import json
+    from pathlib import Path
+    from tokendog.pricing import CURRENT_MODELS, DEFAULT_ROUTED_MODEL
+
+    template = (Path(__file__).resolve().parents[1] / "tokendog-templates"
+                / "settings.json.template")
+    model = json.loads(template.read_text())["model"]
+    assert model in CURRENT_MODELS, f"template routes to {model}, not a current model"
+    assert model == DEFAULT_ROUTED_MODEL

@@ -19,6 +19,15 @@ PRICES: dict[str, tuple[float, float]] = {
 # The two write multipliers are why the ephemeral 5m/1h split has to survive
 # ingestion: a single `cache_creation_input_tokens` scalar cannot be priced
 # exactly, because it conflates two different rates.
+# The model `tokendog init` routes to, and the current generation of each
+# family. Rates are matched by FAMILY (see _match), so pricing does not depend
+# on this list — it exists so a config template cannot quietly keep pointing at
+# a superseded model long after a newer one ships at the same price. Update it
+# when a new generation lands.
+CURRENT_MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5",
+                  "claude-fable-5-1")
+DEFAULT_ROUTED_MODEL = "claude-sonnet-5"
+
 CACHE_READ_MULTIPLIER = 0.1
 CACHE_WRITE_5M_MULTIPLIER = 1.25
 CACHE_WRITE_1H_MULTIPLIER = 2.0

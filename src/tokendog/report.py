@@ -102,8 +102,8 @@ def format_tool_audit(summary: dict) -> str:
 
 
 def effect_data(split=None, project=None, transcript_root=None) -> dict:
-    from .effect import (compare, iter_tool_calls, position_curve, split_calls,
-                         tool_summary)
+    from .effect import (cache_efficiency, compare, iter_tool_calls,
+                         position_curve, split_calls, tool_summary)
     calls = list(iter_tool_calls(transcript_root, project=project))
     data = {"split": split, "project": project,
             "curve": position_curve(transcript_root, project=project)}
@@ -112,6 +112,7 @@ def effect_data(split=None, project=None, transcript_root=None) -> dict:
         data["comparison"] = compare(tool_summary(before), tool_summary(after))
         data["before_calls"], data["after_calls"] = len(before), len(after)
     data["summary"] = tool_summary(calls)
+    data["cache"] = cache_efficiency(transcript_root, project=project)
     return data
 
 
@@ -161,6 +162,25 @@ def format_effect(d: dict) -> str:
                        else ("smaller payloads" if overall < 0 else "larger payloads"))
             lines += ["", f"Overall mean payload {c['before_mean']:,} → "
                           f"{c['after_mean']:,} bytes ({overall:+.1f}%) — **{verdict}**."]
+        lines.append("")
+
+    cache = d.get("cache")
+    if cache:
+        better = cache["net_usd"] < 0
+        lines += ["**Cache TTL** — is the 2x 1-hour write premium being earned?", "",
+                  f"- writes {(cache['write_5m'] + cache['write_1h']) / 1e6:.1f}M tokens "
+                  f"against {cache['reads'] / 1e6:.0f}M reads "
+                  f"({cache['write_read_pct']:.1f}%)",
+                  f"- as billed: ${cache['actual_usd']:,.0f}",
+                  f"- everything on the 5m TTL: ${cache['all_5m_usd']:,.0f}, but "
+                  f"{cache['expiring_gaps']:,} gaps of 5-60 min would rebuild the prefix "
+                  f"(${cache['rebuild_usd']:,.0f})",
+                  f"- net: **${cache['net_usd']:+,.0f}** — the shorter TTL would be "
+                  f"{'CHEAPER' if better else 'more expensive'}"]
+        if not better:
+            lines.append("")
+            lines.append("The 1-hour TTL is the right call here. Cache-write cost is "
+                         "then the price of caching working, not waste to be optimised.")
         lines.append("")
 
     lines.append("_Measured from Claude Code transcripts, retroactively — no hooks and "
