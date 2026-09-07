@@ -8,8 +8,8 @@ org-wide, without losing output quality. Deterministic core, no ML hand-waving.
 
 ## What it does
 
-- **Measures** every tool call's token cost — Claude Code (tiktoken approximation) and Glitch
-  (authoritative, via its stop hook) — side by side, attributed by runtime / tool / model / team.
+- **Measures** token cost from authoritative usage — Claude Code transcripts and Glitch's stop hook
+  — side by side, attributed by runtime / tool / model / team / context band.
 - **Reduces** spend with frugal defaults, output truncation, budgets + alerts, MCP-author helpers,
   config templates, and an optional Rust transport gate (compression, cache pooling, dedup).
 
@@ -34,7 +34,8 @@ python -m pytest -q                 # Python suite
 python -m benchmarks.run            # token-savings benchmark
 
 # In Claude Code:
-#   /plugin install ./tokendog-plugin
+#   /plugin marketplace add .        # the repo root ships .claude-plugin/marketplace.json
+#   /plugin install tokendog@tokenwise
 #   tokendog init                    # drop frugal CLAUDE.md + settings into your repo
 #   ... run a session ...
 #   /tokendog:cost                   # see your spend (4 buckets, not one total)
@@ -51,7 +52,8 @@ silently alters tool output. Adopt the one content-altering feature, truncation,
 
 ```bash
 # 1. Observe — install and work normally. Zero content alteration.
-#    /plugin install ./tokendog-plugin   →   /tokendog:cost   (watch your spend)
+#    /plugin marketplace add . && /plugin install tokendog@tokenwise
+#                                        →   /tokendog:cost   (watch your spend)
 
 # 2. Measure — see what truncation WOULD cut, without changing anything:
 export TOKENDOG_TRUNCATE_MODE=shadow
