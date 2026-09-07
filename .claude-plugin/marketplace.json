@@ -1,0 +1,17 @@
+{
+  "name": "tokenwise",
+  "owner": {
+    "name": "jawahar"
+  },
+  "description": "TokenDog — the watchdog for Claude Code and Glitch token spend.",
+  "plugins": [
+    {
+      "name": "tokendog",
+      "source": "./tokendog-plugin",
+      "description": "Token telemetry for Claude Code and Glitch: measure spend by tool, session, model and pipeline. Measurement-only by default; truncation is opt-in and off.",
+      "version": "0.1.0",
+      "keywords": ["tokens", "cost", "telemetry", "observability"],
+      "category": "workflow"
+    }
+  ]
+}

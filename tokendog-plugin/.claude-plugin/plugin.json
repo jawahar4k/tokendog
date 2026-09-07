@@ -4,7 +4,6 @@
   "version": "0.1.0",
   "description": "Watch and reduce Claude Code / Glitch token spend.",
   "license": "Apache-2.0",
-  "hooks": "./hooks/hooks.json",
   "commands": [
     "./commands/tokendog-cost.md",
     "./commands/tokendog-doctor.md",
