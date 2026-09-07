@@ -70,6 +70,7 @@ python -m benchmarks.run            # token-savings benchmark
 #   /tokendog:cost                   # see your spend (4 buckets, not one total)
 #   /tokendog:bands                  # see WHERE the tokens are (context size)
 #   tokendog cost --project myapp    # one project, not the whole machine
+#   tokendog audit                   # payload volume per tool
 
 # Optional Rust gate:
 cd tokendog-gate && cargo test

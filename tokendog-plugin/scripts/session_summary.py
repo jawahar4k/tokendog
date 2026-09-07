@@ -54,8 +54,10 @@ def main() -> int:
         # a local approximation. The only caveat worth surfacing is a sink that
         # has stopped recording.
         qualifier = " — telemetry sink DEGRADED, figures may be incomplete" if sink_health().get("degraded") else ""
-        msg = (f"TokenDog: this session ~${spend:.4f} across {calls} recorded tool calls"
-               f"{qualifier}. Run /tokendog:cost for the full breakdown.")
+        msg = (f"TokenDog: this session ~${spend:.4f} at API list prices across "
+               f"{calls} recorded tool calls{qualifier} — attribution, not a bill "
+               f"(a subscription has no per-token charge). "
+               f"Run /tokendog:cost for the full breakdown.")
         print(json.dumps({"systemMessage": msg}))
     except Exception:
         return 0

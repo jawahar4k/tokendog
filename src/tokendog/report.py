@@ -22,15 +22,23 @@ def cost_summary(group_by="runtime", since=None, until=None, glitch_db=None,
     rollup = backend.query(QueryFilter(group_by=group_by, since=since,
                                        until=until, project=project))
     return {"group_by": rollup.group_by, "project": project,
+            "note": BILLING_NOTE,
             "rows": [r.__dict__ for r in rollup.rows]}
 
 
-BILLING_CAVEAT = (
-    "_`Est $` is **API list-price attribution**, not an invoice. On a Claude "
-    "subscription (Pro/Max) there is no per-token charge, so read it as relative "
-    "weight — which work costs what — rather than money owed. It is also not a "
-    "rate-limit proxy: it applies price weights (output 5x input, cache read "
-    "0.1x) that quota accounting does not._")
+BILLING_NOTE = (
+    "Est $ is API list-price attribution, not an invoice. On a Claude subscription "
+    "(Pro/Max) there is no per-token charge, so read it as relative weight — which "
+    "work costs what — rather than money owed. It is also not a rate-limit proxy: it "
+    "applies price weights (output 5x input, cache read 0.1x) that quota accounting "
+    "does not.")
+
+# Markdown form for rendered tables; the plain form travels in the API payload
+# so an in-session consumer (the MCP tool) gets the caveat too. Every path that
+# shows a dollar figure must carry it, or the caveat is decoration.
+BILLING_CAVEAT = "_" + BILLING_NOTE.replace(
+    "Est $", "`Est $`", 1).replace(
+    "API list-price attribution", "**API list-price attribution**", 1) + "_"
 
 
 def format_rollup(summary: dict) -> str:
@@ -57,6 +65,39 @@ def format_rollup(summary: dict) -> str:
                  "turn that carries them._")
     lines.append("")
     lines.append(BILLING_CAVEAT)
+    return "\n".join(lines)
+
+
+def format_tool_audit(summary: dict) -> str:
+    """Per-tool payload volume — deliberately NOT a per-tool cost table.
+
+    A transcript turn is where the money is, and it carries no tool name; the
+    hook events that DO name a tool are never priced, because their bytes are
+    billed by the turn that follows them. So a per-tool dollar column can only
+    ever be $0.00, and rendering one prints structural zeros that read as
+    measured ones. This shows the thing that is actually known: how much text
+    each tool put into the context, approximately.
+    """
+    rows = [r for r in summary["rows"]
+            if r["key"] != "(none)" and r["tool_payload_tokens"] > 0]
+    rows.sort(key=lambda r: -r["tool_payload_tokens"])
+    total = sum(r["tool_payload_tokens"] for r in rows)
+    scope = f" — project `{summary['project']}`" if summary.get("project") else ""
+    lines = [f"### TokenDog tool payload volume{scope}", "",
+             "| Tool | Calls | Payload tokens | % |",
+             "|---|--:|--:|--:|"]
+    for r in rows:
+        share = (r["tool_payload_tokens"] / total * 100) if total else 0.0
+        lines.append(f"| {r['key']} | {r['calls']:,} | "
+                     f"{r['tool_payload_tokens']:,} | {share:.1f}% |")
+    if not rows:
+        lines.append("| _(no tool events yet — are the hooks running? "
+                     "`tokendog doctor`)_ | | | |")
+    lines.append("")
+    lines.append("_Approximate (tiktoken) size of each tool's payloads, for attribution. "
+                 "There is no per-tool dollar figure and this is not an omission: cost is "
+                 "priced per metered turn, and a turn carries no tool name. These bytes are "
+                 "billed by the turn that carries them — see `tokendog cost`._")
     return "\n".join(lines)
 
 
@@ -250,8 +291,10 @@ def main(argv=None) -> int:
               + ("  [OVER DAILY]" if st['over_daily'] else "")
               + ("  [OVER ALERT]" if st['over_alert'] else ""))
     elif args.cmd == "audit":
-        gb = "tool"
-        rollup = cost_summary(group_by=gb, project=args.project)
+        rollup = cost_summary(group_by="tool", project=args.project)
+        if not args.session:
+            print(format_tool_audit(rollup))
+            return 0
         if args.session:
             rollup = {"group_by": "session_id",
                       "rows": [r for r in cost_summary(group_by="session_id",

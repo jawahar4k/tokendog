@@ -30,6 +30,10 @@ class RollupRow:
     # being handed one scalar total that hides it.
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    # Approximate SIZE of the tool payloads attributed to this group. Never
+    # priced (those bytes are billed by the following turn), but it is the only
+    # per-tool signal there is: a transcript turn carries no tool name.
+    tool_payload_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -107,6 +111,7 @@ class LocalSQLiteBackend:
         sql = (f"SELECT COALESCE({col},'(none)') AS k, COUNT(*), "
                f"COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), "
                f"COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_creation_tokens),0), "
+               f"COALESCE(SUM(tool_payload_tokens),0), "
                f"COALESCE(SUM(est_cost_usd),0) FROM events")
         clauses, params = [], []
         if filters.since:
@@ -124,8 +129,9 @@ class LocalSQLiteBackend:
                 "+COALESCE(SUM(cache_read_tokens),0)"
                 "+COALESCE(SUM(cache_creation_tokens),0)) DESC")
         rows = []
-        for k, calls, itok, otok, crtok, cctok, cost in self._conn.execute(sql, params):
+        for k, calls, itok, otok, crtok, cctok, ptok, cost in self._conn.execute(sql, params):
             rows.append(RollupRow(key=str(k), calls=calls, input_tokens=itok,
-                                  output_tokens=otok, est_cost_usd=round(cost, 6),
+                                  output_tokens=otok, tool_payload_tokens=ptok,
+                                  est_cost_usd=round(cost, 6),
                                   cache_read_tokens=crtok, cache_creation_tokens=cctok))
         return Rollup(group_by=gb, rows=rows)

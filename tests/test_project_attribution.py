@@ -103,3 +103,28 @@ def test_dollars_are_labelled_as_attribution_not_a_bill():
     assert "not an invoice" in low
     assert "subscription" in low
     assert "rate-limit proxy" in low
+
+
+def test_every_surface_that_shows_dollars_carries_the_caveat():
+    """The caveat has to travel with the number, not sit in one renderer.
+
+    `format_rollup` is the CLI path. In-session, Claude Code reads the MCP
+    tool's dict — which returned rows and no caveat — and the slash command
+    told Claude to describe the figures as "local approximations, not
+    authoritative billing", which was both stale and the opposite of the
+    footer it was printing above it.
+    """
+    from pathlib import Path
+    from tokendog.report import BILLING_NOTE
+
+    summary = report.cost_summary(transcript_root="/nonexistent")
+    assert summary["note"] == BILLING_NOTE          # API/MCP consumers
+
+    root = Path(__file__).resolve().parents[1] / "tokendog-plugin"
+    cmd = (root / "commands" / "tokendog-cost.md").read_text().lower()
+    assert "local approximations" not in cmd, "stale: cost is authoritative now"
+    assert "not an\ninvoice" in cmd or "not an invoice" in cmd
+    assert "authoritative" in cmd
+
+    hook = (root / "scripts" / "session_summary.py").read_text().lower()
+    assert "list prices" in hook and "not a bill" in hook
