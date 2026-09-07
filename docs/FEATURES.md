@@ -72,6 +72,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
 | Telemetry event model (`event.py`) | `TokenEvent` schema with cross-runtime fields (runtime, pipeline, run_id, agent, cluster, tool, model) | One consistent record for both Claude Code & Glitch | Passive |
+| Intervention ledger (`effect.py`) | Before/after tool-payload volume, scoping compliance, and cost-per-turn by turn position — all from transcripts, retroactively | Answers 'did the change help', which `savings` could not: it only measured truncation, so it read 0.0% forever with truncation off. A flat result is reported as flat, not as an absence of measurement | Passive |
 | Project attribution (`transcripts.py`) | Derives `project` from each turn's recorded `cwd`, as a basename | `~/.claude/projects` holds every project on the machine; without this a roll-up answers "what did this laptop spend". Basename only — a full path leaks the home directory and often a client name. Absent `cwd` means unknown, never a guess | Passive |
 | Transcript reader (`transcripts.py`) | Reads **authoritative** per-turn `message.usage` from Claude Code transcripts, preserving the ephemeral 5m/1h cache split, `service_tier` and `inference_geo` | The cost path. One metered turn = one assistant record carrying `message.usage` | Passive |
 | tiktoken approximation (`approx.py`) | Estimates tokens for any text | Sizing tool payloads only — **not** a billing path | Passive |

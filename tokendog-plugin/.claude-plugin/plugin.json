@@ -9,6 +9,7 @@
     "./commands/tokendog-doctor.md",
     "./commands/tokendog-budget.md",
     "./commands/tokendog-bands.md",
+    "./commands/tokendog-effect.md",
     "./commands/tokendog-audit.md",
     "./commands/tokendog-init.md"
   ],

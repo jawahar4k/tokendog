@@ -101,6 +101,76 @@ def format_tool_audit(summary: dict) -> str:
     return "\n".join(lines)
 
 
+def effect_data(split=None, project=None, transcript_root=None) -> dict:
+    from .effect import (compare, iter_tool_calls, position_curve, split_calls,
+                         tool_summary)
+    calls = list(iter_tool_calls(transcript_root, project=project))
+    data = {"split": split, "project": project,
+            "curve": position_curve(transcript_root, project=project)}
+    if split:
+        before, after = split_calls(calls, split)
+        data["comparison"] = compare(tool_summary(before), tool_summary(after))
+        data["before_calls"], data["after_calls"] = len(before), len(after)
+    data["summary"] = tool_summary(calls)
+    return data
+
+
+def format_effect(d: dict) -> str:
+    """Report whether an intervention moved anything — or say it did not.
+
+    A flat number here is a real result, not a failure to measure. The point of
+    the ledger is that "we changed something and nothing happened" becomes
+    visible instead of being indistinguishable from "we never looked".
+    """
+    scope = f" — project `{d['project']}`" if d.get("project") else ""
+    lines = [f"### TokenDog intervention ledger{scope}", ""]
+
+    curve = d["curve"]["buckets"]
+    if curve:
+        lines += ["**Cost by turn position** — the compounding, priced.", "",
+                  "| Turn # in session | Turns | $/turn | Context/turn |",
+                  "|---|--:|--:|--:|"]
+        for b in curve:
+            lines.append(f"| {b['label']} | {b['turns']:,} | "
+                         f"${b['cost_per_turn']:.4f} | {b['context_per_turn']:,} |")
+        ratio = d["curve"]["ratio"]
+        if ratio:
+            lines += ["", f"A turn late in a session costs **{ratio:.1f}x** one at the "
+                          "start. That multiple is the case for splitting a long stage — "
+                          "the work is the same, the carried context is not."]
+        lines.append("")
+
+    c = d.get("comparison")
+    if c:
+        lines += [f"**Tool payloads, before vs on/after {d['split']}** "
+                  f"({d['before_calls']:,} → {d['after_calls']:,} calls)", "",
+                  "| Tool | Calls before → after | Mean bytes before → after | Change | Scoped before → after |",
+                  "|---|--:|--:|--:|--:|"]
+        for name, v in sorted(c["tools"].items(),
+                              key=lambda kv: -(kv[1]["after_calls"])):
+            chg = f"{v['change_pct']:+.0f}%" if v["change_pct"] is not None else "—"
+            def pct(x):
+                return "n/a" if x is None else f"{x:.0f}%"
+            lines.append(
+                f"| {name} | {v['before_calls']:,} → {v['after_calls']:,} | "
+                f"{v['before_mean']:,} → {v['after_mean']:,} | {chg} | "
+                f"{pct(v['before_scoped_pct'])} → {pct(v['after_scoped_pct'])} |")
+        overall = c["change_pct"]
+        if overall is not None:
+            verdict = ("no measurable change" if abs(overall) < 5
+                       else ("smaller payloads" if overall < 0 else "larger payloads"))
+            lines += ["", f"Overall mean payload {c['before_mean']:,} → "
+                          f"{c['after_mean']:,} bytes ({overall:+.1f}%) — **{verdict}**."]
+        lines.append("")
+
+    lines.append("_Measured from Claude Code transcripts, retroactively — no hooks and "
+                 "no instrumentation, so a change made last week can still be checked. "
+                 "`Scoped` is the share of calls that narrowed their own fetch "
+                 "(`Read` with offset/limit, `Grep` with a path/glob/head_limit), "
+                 "counted only for tools where the record can answer it._")
+    return "\n".join(lines)
+
+
 def format_savings(s: dict) -> str:
     lines = [
         "### TokenDog savings — with vs without truncation",
@@ -259,6 +329,10 @@ def main(argv=None) -> int:
 
     sub.add_parser("savings")
 
+    ef = sub.add_parser("effect")
+    ef.add_argument("--split", help="YYYY-MM-DD: compare before vs on/after this date")
+    ef.add_argument("--project")
+
     bd = sub.add_parser("bands")
     bd.add_argument("--project")
 
@@ -301,6 +375,8 @@ def main(argv=None) -> int:
                                                        project=args.project)["rows"]
                                if r["key"] == args.session]}
         print(format_rollup(rollup))
+    elif args.cmd == "effect":
+        print(format_effect(effect_data(split=args.split, project=args.project)))
     elif args.cmd == "savings":
         from .savings import savings_summary
         print(format_savings(savings_summary()))
