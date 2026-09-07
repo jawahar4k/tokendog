@@ -66,6 +66,9 @@ class TokenEvent:
     agent: str | None = None
     cluster: str | None = None
     file: str | None = None
+    # Basename of the transcript's `cwd`, e.g. "contextflow". Basename only:
+    # a full path leaks the home directory, and often a client name with it.
+    project: str | None = None
 
     def __post_init__(self) -> None:
         if self.source == SOURCE_TRANSCRIPT:

@@ -75,6 +75,10 @@ def candidates() -> list[str]:
             out.append(str(value))
 
     add(os.environ.get("TOKENDOG_PYTHON"))
+    # A venv inside the state dir. Not a layout TokenDog creates, but the one
+    # people reach for when they do not want tokendog in their project env, and
+    # `~/.tokendog/` is the obvious home for it. Found in the field.
+    add(_home() / "venv" / "bin" / "python")
     venv = os.environ.get("VIRTUAL_ENV")
     if venv:
         add(Path(venv) / "bin" / "python")

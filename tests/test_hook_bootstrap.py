@@ -161,3 +161,21 @@ def test_silent_hooks_stay_silent_without_tokendog(bare_python, tmp_path):
         r = _run(bare_python, name,
                  {"hook_event_name": "PreToolUse", "session_id": "s"}, env)
         assert r.returncode == 0 and r.stdout.strip() == "", name
+
+
+def test_state_dir_venv_is_searched():
+    """`~/.tokendog/venv` is where people put it.
+
+    Not a layout TokenDog creates, but the one reached for when tokendog should
+    not live in the project's own environment — and the state dir is the
+    obvious home. Found in the field: a working install depended on the venv's
+    console script happening to be on PATH, which is luck, not resolution.
+    """
+    b = _bootstrap()
+    assert str(Path.home() / ".tokendog" / "venv" / "bin" / "python") in b.candidates()
+
+
+def test_state_dir_venv_follows_tokendog_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    b = _bootstrap()
+    assert str(tmp_path / "venv" / "bin" / "python") in b.candidates()

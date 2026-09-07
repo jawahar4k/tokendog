@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterator
 from .event import TokenEvent, RUNTIME_CLAUDE, SOURCE_TRANSCRIPT
 
@@ -55,6 +55,24 @@ def split_cache_creation(usage: dict) -> tuple[int, int, int]:
     return total, five_m, one_h
 
 
+def project_of(record: dict) -> str | None:
+    """Project name for a transcript record: the basename of its `cwd`.
+
+    Claude Code records `cwd` on every turn, so attribution is exact rather
+    than inferred. The containing directory name encodes the same path with
+    `/` replaced by `-`, which cannot be decoded unambiguously — a project
+    called `my-app` is indistinguishable from a directory `my/app` — so when
+    `cwd` is absent this returns None rather than guess wrong.
+
+    Basename only, for the same reason `ingest.redact_path` exists: the full
+    path carries the home directory and frequently a client or product name.
+    """
+    cwd = record.get("cwd")
+    if not isinstance(cwd, str) or not cwd.strip():
+        return None
+    return PurePosixPath(cwd.strip().rstrip("/")).name or None
+
+
 def event_from_record(record: dict, *, session_id: str | None = None,
                       transcript_id: str | None = None) -> TokenEvent | None:
     """Build a TokenEvent from one transcript record, or None if it is not a turn."""
@@ -84,6 +102,7 @@ def event_from_record(record: dict, *, session_id: str | None = None,
         service_tier=usage.get("service_tier"),
         inference_geo=usage.get("inference_geo"),
         model=message.get("model"),
+        project=project_of(record),
     )
 
 
@@ -120,3 +139,34 @@ def read_transcripts(root=None) -> Iterator[TokenEvent]:
         return
     for jf in sorted(base.rglob("*.jsonl")):
         yield from read_transcript(jf)
+
+
+def known_projects(root=None, max_lines: int = 40) -> list[str]:
+    """Project names present in the transcript tree, cheaply.
+
+    Reads only the first few lines of each file rather than every turn: this
+    exists so `doctor` can tell you what `--project` accepts without paying a
+    full ingest. Returns basenames, so it never prints a home directory back at
+    you — the containing directory names are full paths with `/` turned into
+    `-`, which is both unusable as a filter value and a privacy leak.
+    """
+    base = Path(root).expanduser() if root is not None else transcript_root()
+    if not base.exists():
+        return []
+    found: set[str] = set()
+    for jf in sorted(base.rglob("*.jsonl")):
+        try:
+            with jf.open(encoding="utf-8", errors="replace") as f:
+                for _, line in zip(range(max_lines), f):
+                    if '"cwd"' not in line:
+                        continue
+                    try:
+                        name = project_of(json.loads(line))
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        continue
+                    if name:
+                        found.add(name)
+                        break
+        except OSError:
+            continue
+    return sorted(found)

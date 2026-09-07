@@ -8,13 +8,15 @@ from .config import db_path
 
 _ALLOWED_GROUP = {"runtime", "user", "tool", "model", "pipeline",
                   "day", "session_id", "agent", "cluster", "source",
-                  "service_tier", "inference_geo", "band", "transcript_id"}
+                  "service_tier", "inference_geo", "band", "transcript_id",
+                  "project"}
 
 @dataclass
 class QueryFilter:
     group_by: str = "runtime"
     since: str | None = None
     until: str | None = None
+    project: str | None = None
 
 @dataclass
 class RollupRow:
@@ -48,7 +50,7 @@ _COLUMNS = ("ts", "session_id", "runtime", "event", "input_tokens", "output_toke
             "cache_creation_1h_tokens", "tool_payload_tokens", "source",
             "service_tier", "inference_geo", "context_tokens", "band",
             "transcript_id", "tool", "model", "user",
-            "pipeline", "run_id", "agent", "cluster", "file")
+            "pipeline", "run_id", "agent", "cluster", "file", "project")
 
 def _col_def(c: str) -> str:
     if c.endswith("_tokens"):
@@ -111,6 +113,10 @@ class LocalSQLiteBackend:
             clauses.append("ts >= ?"); params.append(filters.since)
         if filters.until:
             clauses.append("ts <= ?"); params.append(filters.until)
+        if filters.project:
+            # Turns with no recorded cwd have no project and are excluded
+            # rather than guessed into the wrong bucket.
+            clauses.append("project = ?"); params.append(filters.project)
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += (" GROUP BY k ORDER BY (COALESCE(SUM(input_tokens),0)"

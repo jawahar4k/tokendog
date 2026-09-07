@@ -72,6 +72,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
 | Telemetry event model (`event.py`) | `TokenEvent` schema with cross-runtime fields (runtime, pipeline, run_id, agent, cluster, tool, model) | One consistent record for both Claude Code & Glitch | Passive |
+| Project attribution (`transcripts.py`) | Derives `project` from each turn's recorded `cwd`, as a basename | `~/.claude/projects` holds every project on the machine; without this a roll-up answers "what did this laptop spend". Basename only — a full path leaks the home directory and often a client name. Absent `cwd` means unknown, never a guess | Passive |
 | Transcript reader (`transcripts.py`) | Reads **authoritative** per-turn `message.usage` from Claude Code transcripts, preserving the ephemeral 5m/1h cache split, `service_tier` and `inference_geo` | The cost path. One metered turn = one assistant record carrying `message.usage` | Passive |
 | tiktoken approximation (`approx.py`) | Estimates tokens for any text | Sizing tool payloads only — **not** a billing path | Passive |
 | JSONL sink (`sink.py`) | Appends events to a daily `.jsonl` file, with a per-day size cap (`TOKENDOG_MAX_SINK_MB`, default 64) and a retention window (`TOKENDOG_RETENTION_DAYS`, default 30); records every failed write to a health file | Durable, greppable local audit trail that cannot grow without bound or stop silently | Passive |

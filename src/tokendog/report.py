@@ -10,7 +10,7 @@ from .templates import apply_templates, repo_templates_dir
 
 
 def cost_summary(group_by="runtime", since=None, until=None, glitch_db=None,
-                 transcript_root=None) -> dict:
+                 transcript_root=None, project=None) -> dict:
     backend = LocalSQLiteBackend(path=":memory:")
     # Transcripts and Glitch carry authoritative usage and are what gets priced.
     # The hook sink is loaded too, but only contributes tool-payload volume —
@@ -19,9 +19,18 @@ def cost_summary(group_by="runtime", since=None, until=None, glitch_db=None,
     ingest_sink(backend)
     if glitch_db:
         ingest_glitch_firmware(backend, glitch_db)
-    rollup = backend.query(QueryFilter(group_by=group_by, since=since, until=until))
-    return {"group_by": rollup.group_by,
+    rollup = backend.query(QueryFilter(group_by=group_by, since=since,
+                                       until=until, project=project))
+    return {"group_by": rollup.group_by, "project": project,
             "rows": [r.__dict__ for r in rollup.rows]}
+
+
+BILLING_CAVEAT = (
+    "_`Est $` is **API list-price attribution**, not an invoice. On a Claude "
+    "subscription (Pro/Max) there is no per-token charge, so read it as relative "
+    "weight — which work costs what — rather than money owed. It is also not a "
+    "rate-limit proxy: it applies price weights (output 5x input, cache read "
+    "0.1x) that quota accounting does not._")
 
 
 def format_rollup(summary: dict) -> str:
@@ -30,7 +39,8 @@ def format_rollup(summary: dict) -> str:
     Cache-write is the bucket that grows with context churn and is the one a
     developer can actually move; a scalar total hides it.
     """
-    lines = [f"### TokenDog cost by {summary['group_by']}",
+    scope = f" — project `{summary['project']}`" if summary.get("project") else ""
+    lines = [f"### TokenDog cost by {summary['group_by']}{scope}",
              "",
              "| Group | Calls | Cache write | Cache read | Out | Fresh in | Est $ |",
              "|---|--:|--:|--:|--:|--:|--:|"]
@@ -45,6 +55,8 @@ def format_rollup(summary: dict) -> str:
                  "transcripts, Glitch). Hook events contribute tool-payload volume "
                  "only and are not priced — their bytes are already billed by the "
                  "turn that carries them._")
+    lines.append("")
+    lines.append(BILLING_CAVEAT)
     return "\n".join(lines)
 
 
@@ -72,11 +84,16 @@ def format_savings(s: dict) -> str:
     return "\n".join(lines)
 
 
-def band_report_data(transcript_root=None) -> dict:
+def band_report_data(transcript_root=None, project=None) -> dict:
     from itertools import chain
     from .bands import band_summary
     from .transcripts import read_transcripts
-    return band_summary(chain(read_transcripts(transcript_root), read_events()))
+    events = chain(read_transcripts(transcript_root), read_events())
+    if project:
+        events = (e for e in events if e.project == project)
+    data = band_summary(events)
+    data["project"] = project
+    return data
 
 
 def format_bands(s: dict) -> str:
@@ -86,7 +103,8 @@ def format_bands(s: dict) -> str:
     "how big was the context when it was spent" — the number a developer can
     act on, because everything in a context is re-read on every later turn.
     """
-    lines = ["### TokenDog context bands", ""]
+    scope = f" — project `{s['project']}`" if s.get("project") else ""
+    lines = [f"### TokenDog context bands{scope}", ""]
     if not s["turns"]:
         lines.append("_No metered turns found. Context bands are read from Claude Code "
                      "transcripts — run `tokendog doctor` to check they were located._")
@@ -116,7 +134,7 @@ def format_bands(s: dict) -> str:
 
 
 def doctor_report(cwd: str) -> str:
-    from .transcripts import transcript_root
+    from .transcripts import transcript_root, known_projects
     from .sink import sink_health, retention_days, max_sink_bytes
     home = tokendog_home()
     n_events = sum(1 for _ in read_events())
@@ -126,7 +144,13 @@ def doctor_report(cwd: str) -> str:
     troot = transcript_root()
     if troot.exists():
         n_transcripts = sum(1 for _ in troot.rglob("*.jsonl"))
-        transcript_status = f"{n_transcripts} file(s) at {troot}"
+        projects = known_projects()
+        shown = ", ".join(projects[:8]) + ("…" if len(projects) > 8 else "")
+        transcript_status = (f"{n_transcripts} file(s) at {troot}\n"
+                             f"    - covers {len(projects)} project(s) on this machine, "
+                             f"not just the current one: {shown}\n"
+                             f"    - scope one with `tokendog cost --project <name>` "
+                             f"(name = the project directory's basename)")
     else:
         transcript_status = f"NOT FOUND at {troot} — cost will read $0 without it"
 
@@ -159,6 +183,8 @@ def doctor_report(cwd: str) -> str:
         f"- sink health: {sink_status}",
         f"- claude code transcripts (authoritative cost): {transcript_status}",
         f"- tiktoken: {tik}",
+        "- cost figures: API list-price attribution, not an invoice — on a Pro/Max "
+        "subscription there is no per-token charge, so read them as relative weight",
         f"- glitch firmware.db: {glitch_status} ({glitch})",
         "- quality-affecting features (off unless you opt in):",
         f"    - output truncation: {trunc}",
@@ -175,6 +201,7 @@ def main(argv=None) -> int:
     c.add_argument("--since")
     c.add_argument("--until")
     c.add_argument("--glitch-db")
+    c.add_argument("--project", help="restrict to one project (transcript cwd basename)")
 
     sub.add_parser("doctor")
 
@@ -187,10 +214,12 @@ def main(argv=None) -> int:
 
     a = sub.add_parser("audit")
     a.add_argument("--session")
+    a.add_argument("--project")
 
     sub.add_parser("savings")
 
-    sub.add_parser("bands")
+    bd = sub.add_parser("bands")
+    bd.add_argument("--project")
 
     i = sub.add_parser("init")
     i.add_argument("--target", default=".")
@@ -198,7 +227,8 @@ def main(argv=None) -> int:
 
     args = p.parse_args(argv)
     if args.cmd == "cost":
-        print(format_rollup(cost_summary(args.group_by, args.since, args.until, args.glitch_db)))
+        print(format_rollup(cost_summary(args.group_by, args.since, args.until,
+                                         args.glitch_db, project=args.project)))
     elif args.cmd == "doctor":
         print(doctor_report(os.getcwd()))
     elif args.cmd == "budget":
@@ -221,16 +251,18 @@ def main(argv=None) -> int:
               + ("  [OVER ALERT]" if st['over_alert'] else ""))
     elif args.cmd == "audit":
         gb = "tool"
-        rollup = cost_summary(group_by=gb)
+        rollup = cost_summary(group_by=gb, project=args.project)
         if args.session:
             rollup = {"group_by": "session_id",
-                      "rows": [r for r in cost_summary(group_by="session_id")["rows"] if r["key"] == args.session]}
+                      "rows": [r for r in cost_summary(group_by="session_id",
+                                                       project=args.project)["rows"]
+                               if r["key"] == args.session]}
         print(format_rollup(rollup))
     elif args.cmd == "savings":
         from .savings import savings_summary
         print(format_savings(savings_summary()))
     elif args.cmd == "bands":
-        print(format_bands(band_report_data()))
+        print(format_bands(band_report_data(project=args.project)))
     elif args.cmd == "init":
         written = apply_templates(repo_templates_dir(), args.target, force=args.force)
         for p in written:

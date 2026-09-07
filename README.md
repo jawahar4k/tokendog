@@ -31,6 +31,13 @@ the model pay to rebuild it. Output — the thing most token advice is about —
 token carried for 50 turns costs more on Opus than a token generated once, and here 50.2% of turns
 ran at ≥200k context and accounted for 82.4% of spend.
 
+`Est $` is **API list-price attribution, not an invoice** — on a Pro/Max subscription there is no
+per-token charge, so read it as relative weight. It is not a rate-limit proxy either: it applies
+price weights (output 5× input, cache read 0.1×) that quota accounting does not.
+
+Transcripts cover every project on the machine, so scope a report with `--project <name>` (the
+project directory's basename); `tokendog doctor` lists the names it found.
+
 Those are one machine's numbers; a second seat showed the same ordering with output nearer 15%.
 Run `tokendog cost` and `tokendog bands` on your own history before believing any of it — that is
 what the measurement half is for. Details in `docs/FEATURES.md`.
@@ -62,6 +69,7 @@ python -m benchmarks.run            # token-savings benchmark
 #   ... run a session ...
 #   /tokendog:cost                   # see your spend (4 buckets, not one total)
 #   /tokendog:bands                  # see WHERE the tokens are (context size)
+#   tokendog cost --project myapp    # one project, not the whole machine
 
 # Optional Rust gate:
 cd tokendog-gate && cargo test
