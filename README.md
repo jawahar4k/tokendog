@@ -10,8 +10,30 @@ org-wide, without losing output quality. Deterministic core, no ML hand-waving.
 
 - **Measures** token cost from authoritative usage — Claude Code transcripts and Glitch's stop hook
   — side by side, attributed by runtime / tool / model / team / context band.
-- **Reduces** spend with frugal defaults, output truncation, budgets + alerts, MCP-author helpers,
-  config templates, and an optional Rust transport gate (compression, cache pooling, dedup).
+- **Reduces** spend in the order the bill is actually incurred — **carry less** (context re-read on
+  every turn), **rewrite less** (cache writes when the prefix churns), then **generate less**
+  (output). Via output truncation, session hygiene, budgets + alerts, config templates, MCP-author
+  helpers, and an optional Rust transport gate (cache pooling, dedup, compression).
+
+### Where the money goes
+
+Measured over one developer's 30,773 metered turns (10.0B tokens, $8,409):
+
+| Bucket | % of tokens | % of cost |
+|---|--:|--:|
+| Cache read | 96.6% | **56.5%** |
+| Cache write | 3.1% | **34.6%** |
+| Output | 0.3% | **9.0%** |
+| Fresh input | 0.0% | 0.0% |
+
+Roughly nine-tenths of the bill is context economics: how much you carry, and how often you make
+the model pay to rebuild it. Output — the thing most token advice is about — is the last ninth. A
+token carried for 50 turns costs more on Opus than a token generated once, and here 50.2% of turns
+ran at ≥200k context and accounted for 82.4% of spend.
+
+Those are one machine's numbers; a second seat showed the same ordering with output nearer 15%.
+Run `tokendog cost` and `tokendog bands` on your own history before believing any of it — that is
+what the measurement half is for. Details in `docs/FEATURES.md`.
 
 ## Layers (each independently useful)
 

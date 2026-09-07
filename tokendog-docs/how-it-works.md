@@ -5,6 +5,15 @@ and Glitch spend: fixed prompts, variable tool outputs, prompt caching, model ro
 discipline, observability, org-wide defaults, behavioral norms, session lifecycle, and cross-session
 memory. The 47 items below are the exhaustive list, grouped into ten categories A–J.
 
+**The A–J ordering is a taxonomy, not a priority.** Measured against real transcripts, the bill
+breaks down roughly 57% cache reads (context carried across turns), 35% cache writes (rebuilding a
+prefix that churned), 9% output, and ~0% fresh input. So category **C · Prompt caching** and the
+context-size items in **B** are where the money is; **E · Output-token discipline** governs about a
+ninth of it, and **A · Fixed-prompt shrink** pays off by shrinking the *carried* prefix rather than
+by cutting fresh input, which rounds to zero. See `docs/FEATURES.md` for the measurement and its
+caveats, and run `tokendog cost` / `tokendog bands` on your own history — the ordering replicated
+across two seats, the magnitudes did not.
+
 **Status key:**
 - **Shipped (Slice N)** — live in this repo with tests; module listed.
 - **Gate (Slice 6+)** — requires the TokenDog transport gateway; deferred pending release approval.

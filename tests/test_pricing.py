@@ -84,3 +84,22 @@ def test_matches_versioned_and_suffixed_model_ids():
     assert estimate_cost(1_000_000, 0, "claude-sonnet-5") == PRICES["sonnet"][0]
     assert estimate_cost(1_000_000, 0, "claude-haiku-4-5") == PRICES["haiku"][0]
     assert estimate_cost(1_000_000, 0, "claude-fable-5") == PRICES["fable"][0]
+
+
+# --- claims the docs make -----------------------------------------------
+
+
+def test_carrying_beats_generating_after_fifty_turns_on_opus():
+    """README and docs/FEATURES.md both assert this; pin it to the rates.
+
+    "A token you carry for 50 turns costs more than a token you generate."
+    It is the sentence the three-lever ordering rests on, and it is a
+    consequence of the rate table, not an independent fact — if Opus pricing or
+    the cache-read multiplier moves, the docs become wrong silently.
+    """
+    carry_per_turn = estimate_cost(model="opus", cache_read_tokens=1_000_000)
+    generate_once = estimate_cost(output_tokens=1_000_000, model="opus")
+    break_even = generate_once / carry_per_turn
+    assert break_even == 50, (
+        f"docs say 50 turns; the rate table now says {break_even:g}. "
+        "Update README.md and docs/FEATURES.md together with this test.")

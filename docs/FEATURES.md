@@ -3,26 +3,63 @@
 Everything TokenDog implements today, grouped by layer, with the benefit and the
 *kind* of each feature. This is the honest, complete map — nothing here is aspirational.
 
-## How savings actually happen (two levers)
+## Where the money actually goes (three levers)
 
-Token savings come from distinct mechanisms that hit different token buckets:
+Each lever below was sized against real transcripts rather than assumed. The figures are one
+developer's history — 210 transcripts, 30,773 metered turns, 10.0B tokens, $8,409 — and a second
+seat reported the same *shape* with different magnitudes (output 14.5% there, 9.0% here). Treat
+the ordering as robust and the exact percentages as local: run `tokendog cost` and `tokendog bands`
+on your own data before acting on any of it.
 
-- **Lever A — Instruct (prompt-side, before generation).** Tell the model to be terse
-  (no preamble, no "Please/Thank you"). The model *generates* fewer tokens. This is the
-  **only** way to save on the output itself — once text is emitted it is already billed.
-  Non-deterministic (the model may not fully comply).
-- **Lever B — Trim/compact (post-processing, before the next turn).** Shorten content
-  *after* it is produced, then store the shortened version. Saves **nothing** on the turn
-  that just happened, but in an agent loop that output becomes **input/context on every
-  later turn** — so it cuts input + cache-creation tokens going forward. Deterministic.
-- **Transport pooling/caching (optional gate).** Canonical ordering, dedup, and pooled
-  cache keys raise prompt-cache hit rate and drop duplicate payloads at the wire.
+| Bucket | % of tokens | % of cost | Lever |
+|---|--:|--:|---|
+| Cache read | 96.6% | 56.5% | 1 — carry less |
+| Cache write | 3.1% | 34.6% | 2 — rewrite less |
+| Output | 0.3% | 9.0% | 3 — generate less |
+| Fresh input | 0.0% | 0.0% | — |
+
+The token and cost columns disagree violently, which is the whole point: cache reads are 96.6% of
+the tokens at 0.1× the input rate, output is 0.3% of the tokens at 5× it. Counting tokens tells you
+almost nothing about the bill.
+
+**Lever 1 — Carry less (56.5% of cost).** Every token resident in the context window is re-read and
+re-billed on *every subsequent turn*. One read is cheap; the multiplier is the turn count, and it
+compounds silently. On Opus, carrying 1 MTok costs $0.50 per turn against $25 to generate 1 MTok
+once — so **a token you carry for 50 turns costs more than a token you generate.** Measured here:
+50.2% of turns run at ≥200k context and account for 82.4% of the bill. Served by output truncation
+(what a turn stores is what later turns carry), `/clear` hygiene, session lifecycle, and `bands` to
+locate where context accumulates.
+
+**Lever 2 — Rewrite less (34.6%).** Cache *writes*, not reads. Anything that invalidates the cached
+prefix makes you pay to rebuild it, at 1.25× the input rate for a 5-minute TTL and 2× for one hour.
+On this data 1-hour writes are 33.0% of the bill and 5-minute writes 1.6% — which is why the
+ephemeral 5m/1h split must survive ingestion rather than being collapsed into one scalar. Served by
+canonical ordering, pooled cache keys, and dedup: a stable prefix is one you stop paying to rebuild.
+
+**Lever 3 — Generate less (9.0%).** Telling the model to be terse. This is the only lever that
+touches output at all — once text is emitted it is already billed — and it is non-deterministic, as
+the model may not comply. It is worth doing. It is not worth doing first, and a framework that leads
+with it is optimizing the smallest ninth of the bill.
+
+**Fresh input rounds to zero (0.0%).** In a sustained agent loop essentially every input token is
+either read from cache or written to it. Prompt-shrinking work pays off through Levers 1 and 2 —
+by making the *carried* prefix smaller and more stable — not by reducing fresh input directly.
+
+### Mechanisms
+
+- **Instruct (prompt-side, before generation).** Tell the model to be terse. Serves Lever 3, and is
+  the only mechanism that can touch output. Non-deterministic.
+- **Trim/compact (post-processing, before the next turn).** Shorten content *after* it is produced,
+  then store the shortened version. Saves nothing on the turn that just happened; in an agent loop
+  that output becomes context on every later turn, so it serves Lever 1. Deterministic.
+- **Transport pooling/caching (optional gate).** Canonical ordering, dedup, and pooled cache keys
+  raise prompt-cache hit rate and stabilise the prefix. Serves Lever 2.
 
 **Kind** column legend:
 
 - **Passive** — cannot change model output; pure measurement.
-- **Instruct** — guides the model (Lever A).
-- **Active** — transforms a call (Lever B / transport).
+- **Instruct** — guides the model (Lever 3).
+- **Active** — transforms a call (Levers 1 and 2).
 - **Reference** — docs/config scaffolding.
 
 TokenDog does **not** do semantic prose-rewriting or filler-word stripping of assistant
@@ -44,7 +81,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | Context bands (`bands.py`) | Buckets every metered turn by context size (cache read + cache write + fresh input), reports concentration and peak context per transcript | Answers "how big was the context when it was spent" — the dimension runtime/tool/session/model cannot express | Passive |
 | Reporting CLI (`report.py`) | `cost` `doctor` `budget` `audit` `savings` `bands` `init` | One command line for all insight | Passive |
 | Budgets (`budget.py`) | Daily / session / alert limits + webhook | Spend guardrails (enforcement runs in the hook) | Passive |
-| Truncation logic (`truncate.py`) | Head+tail cap of oversized text | Shrinks bloated tool output re-sent as context | Active (Lever B) — **off by default** |
+| Truncation logic (`truncate.py`) | Head+tail cap of oversized text | Shrinks bloated tool output re-sent as context | Active (Lever 1) — **off by default** |
 | Savings ledger (`savings.py`) | Records every truncation (enforce vs shadow) to a separate ledger | The with/without comparison, per call | Passive |
 | Templates (`templates.py`) | Idempotent CLAUDE.md / settings install with an extension marker | Drop-in frugal config that preserves your edits | Instruct |
 | Config (`config.py`) | Resolves state dir (`~/.tokendog`, override `TOKENDOG_HOME`) | Isolatable, testable state | Passive |
@@ -54,14 +91,14 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
 | `token_count` hook | Records **tool-payload volume** (`tool_payload_tokens`) on every Pre/Post tool use, Stop, SessionStart | Per-tool attribution. Deliberately not billable: those bytes are billed by the turn that carries them, so pricing them here would double-count | Passive |
-| `truncate_output` hook | Runs the truncation logic per call; `off` (default) / `shadow` / `enforce` | Cuts context bloat; opt-in, watch-only first | Active (Lever B) — **off by default** |
+| `truncate_output` hook | Runs the truncation logic per call; `off` (default) / `shadow` / `enforce` | Cuts context bloat; opt-in, watch-only first | Active (Lever 1) — **off by default** |
 | `budget_enforce` hook | PreToolUse deny when over budget; honors observe-only; fails open | Hard spend ceiling that never crashes a session | Active |
 | `session_summary` hook | End-of-session spend recap | Per-session cost awareness | Passive |
 | `budget_alert` hook | Webhook alert on threshold crossing | Team-level overspend notice | Passive |
 | `sink_health` hook | SessionStart warning when the sink has stopped accepting writes, **or when no interpreter on the machine can import `tokendog`** | The other hooks swallow every exception so they never crash a session; this is the one place a broken sink — or a plugin recording nothing at all — is said out loud | Passive |
 | Interpreter bootstrap (`_bootstrap.py`) | Re-execs hooks and the MCP server under a Python that can import `tokendog` (`TOKENDOG_PYTHON`, `$VIRTUAL_ENV`, a project `.venv/`, the `tokendog` console script), caching the result in `~/.tokendog/interpreter` | `python3` is rarely the env pip installed into. Without this the ImportError is swallowed and the plugin silently records nothing; costs one probe, once, and only after the default interpreter has already failed | Passive |
 | `tokendog-cost` MCP server | Exposes cost data to the agent | Ask "what have I spent?" in-session | Passive |
-| `tokendog-frugal` skill | Always-on terseness guidance to the model | Fewer output tokens (Lever A) | Instruct |
+| `tokendog-frugal` skill | Always-on terseness guidance to the model | Fewer output tokens — the 9% lever (Lever 3) | Instruct |
 | `tokendog-hygiene` skill | Session-hygiene practices (clear context, scope tools) | Avoids context bloat | Instruct |
 | Slash commands | `/tokendog:cost` `:doctor` `:budget` `:bands` `:audit` `:init` | Manual control surface | Passive |
 | Glitch stop hook + `tokendog-stop.sh` | Records authoritative Glitch token counts; shell wrapper needs no Python edit | First-class Glitch support | Passive |
@@ -94,16 +131,17 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 
 ## Layer 6 — Optional Rust transport gate (`tokendog-gate/`)
 
-Only active if you run the gate as a proxy in front of the API.
+Only active if you run the gate as a proxy in front of the API. Most of it targets Lever 2 —
+the 34.6% of the bill spent rewriting a prefix that did not need to change.
 
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
 | `compress` | Structural JSON compression | Smaller request bodies | Active |
-| `caching` | Canonical ordering + pooled cache keys | Higher prompt-cache hit rate across a team | Active |
-| `dedup` | Removes duplicate context blocks | No repeated payloads | Active |
+| `caching` | Canonical ordering + pooled cache keys | Higher prompt-cache hit rate across a team — a stable prefix is one you stop paying to rebuild | Active (Lever 2) |
+| `dedup` | Removes duplicate context blocks | No repeated payloads carried forward | Active (Levers 1, 2) |
 | `observe` | Parses real `usage` from responses | Authoritative counts at the wire | Passive |
-| `ccr` | Context-cache retrieve / reuse | Reuse prior context | Active |
-| `truncate` | Head+tail at transport | Wire-level size cap | Active |
+| `ccr` | Context-cache retrieve / reuse | Reuse prior context instead of re-writing it | Active (Lever 2) |
+| `truncate` | Head+tail at transport | Wire-level size cap on what gets carried | Active (Lever 1) |
 | `session` | Session persistence | State across calls | Active |
 | `qa_cache` | Exact-match Q→A cache | Skip re-asking identical prompts | Active |
 
