@@ -1,0 +1,1459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TokenDog</title>
+<!-- Display face for the wordmark, headings and headline numbers. Loopback/offline
+     falls back to the system stack below, so the page never blocks on the network. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap">
+<style>
+/* Tokens. Light is the base set; dark redefines only these, under both the OS
+   media query and an explicit stamp, so either can win. Grounds carry a slight
+   warm bias rather than being pure grey.
+
+   The band ramp is a single-hue ordinal scale, five steps, each step spaced far
+   enough from its neighbour to be told apart — which is why the view folds the
+   two smallest context bands together. The four status colours are fixed and
+   never appear without a word beside them: two of them sit below 3:1 on the
+   light ground, so colour alone would not carry the meaning. */
+:root {
+  color-scheme: light;
+  --plane:#f3f5f7; --surface:#ffffff; --surface-2:#e9edf1;
+  --ink:#0d1418; --ink-2:#48545d; --ink-3:#7b8792;
+  --rule:#e2e7ec; --rule-2:#c2ccd4;
+  --accent:#0c8a80; --accent-soft:#0c8a801a;
+  --b1:#8ed6cc; --b2:#4cbcae; --b3:#0c8a80; --b4:#0a675e; --b5:#06423b;
+  --good:#7b8792; --warning:#c67c00; --serious:#e0670b; --critical:#d23b2e;
+  --good-ink:#5c6771; --warning-ink:#8a5600; --serious-ink:#9a4708; --critical-ink:#b02a1f;
+  --shadow:0 1px 2px rgba(13,20,24,.06); --shadow-lift:0 2px 10px rgba(13,20,24,.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane:#0b0f12; --surface:#141a1f; --surface-2:#1c242b;
+    --ink:#f2f6f9; --ink-2:#aeb9c2; --ink-3:#7c8792;
+    --rule:#232c33; --rule-2:#34404a;
+    --accent:#2dd4bf; --accent-soft:#2dd4bf1f;
+    --b1:#0b4f48; --b2:#0f7a6f; --b3:#14b8a6; --b4:#5fd6c8; --b5:#9fe7dd;
+    --good:#7c8792; --warning:#eaa72c; --serious:#f2843f; --critical:#f0655a;
+    --good-ink:#9aa5af; --warning-ink:#eaa72c; --serious-ink:#f2843f; --critical-ink:#f0655a;
+    --shadow:none; --shadow-lift:0 2px 12px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:#0b0f12; --surface:#141a1f; --surface-2:#1c242b;
+  --ink:#f2f6f9; --ink-2:#aeb9c2; --ink-3:#7c8792;
+  --rule:#232c33; --rule-2:#34404a;
+  --accent:#2dd4bf; --accent-soft:#2dd4bf1f;
+  --b1:#0b4f48; --b2:#0f7a6f; --b3:#14b8a6; --b4:#5fd6c8; --b5:#9fe7dd;
+  --good:#7c8792; --warning:#eaa72c; --serious:#f2843f; --critical:#f0655a;
+  --good-ink:#9aa5af; --warning-ink:#eaa72c; --serious-ink:#f2843f; --critical-ink:#f0655a;
+  --shadow:none; --shadow-lift:0 2px 12px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--plane); color:var(--ink);
+  font:400 14px/1.55 "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+.num{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+/* Display face for identity + headline figures; body stays Plex Sans for reading. */
+.display{font-family:"Manrope","IBM Plex Sans",system-ui,sans-serif}
+img{max-width:100%}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px 80px}
+
+/* Masthead: TWO type sizes, not five. The product name is the only heading —
+   naming the page as well ("TokenDog | Context Ledger") said the same thing
+   twice — and everything else is one supporting size. The previous version had
+   a 20px mark, an 11px wordmark, a 20px title, a 12px scope and an 11.5px
+   stamp in one row, which is what read as unfinished. */
+.masthead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:30px 0 0}
+.masthead h1{display:flex;align-items:center;gap:10px;margin:0;line-height:1}
+.masthead h1 .mark{font-size:20px;line-height:1}
+/* Two-tone mono wordmark — the product's signature. "Dog" carries the accent. */
+.masthead h1 .wm{font-family:"Manrope","IBM Plex Sans",system-ui,sans-serif;
+  font-size:22px;font-weight:800;letter-spacing:-.02em;color:var(--ink)}
+.masthead h1 .wm .ac{color:var(--accent)}
+/* Status LED as a collar tag beside the wordmark: glows the worst live severity.
+   Colour is backed by a SHAPE (the glyph set on the row chips) + the title text,
+   so it never carries meaning by hue alone. Pulses only on critical. */
+/* Healthy = a HOLLOW ring (empty: nothing to see); any alert = a FILLED dot in
+   the severity colour. Ok vs alert is told apart by SHAPE, not just hue. */
+.masthead h1 .led{width:11px;height:11px;border-radius:50%;background:transparent;
+  border:2px solid var(--ink-3);box-shadow:0 0 0 0 currentColor;color:var(--warning)}
+.masthead h1 .led.warn{background:var(--warning);border-color:var(--warning);color:var(--warning)}
+.masthead h1 .led.ser{background:var(--serious);border-color:var(--serious);color:var(--serious)}
+.masthead h1 .led.crit{background:var(--critical);border-color:var(--critical);color:var(--critical);animation:ledpulse 1.6s ease-out infinite}
+@keyframes ledpulse{0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion: reduce){.masthead h1 .led.crit{animation:none}}
+.masthead .scope,
+.masthead .stamp{font-size:12px;color:var(--ink-3);line-height:1.4}
+.masthead .right{margin-left:auto;display:flex;align-items:center;gap:16px}
+
+/* --- tab bar -------------------------------------------------------------
+   One rule under the whole bar. The active tab's marker is pulled down by
+   exactly that rule's width so it sits ON the line rather than floating a
+   pixel above it — two near-parallel lines is what read as overlapping. */
+/* Global range control, its own row above the tab bar (everything below is
+   scoped to it), right-aligned. Native <select> for accessibility + a caret. */
+.rangerow{display:flex;justify-content:flex-end;align-items:center;margin-top:18px}
+.bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px 18px;margin-top:8px;
+  border-bottom:1px solid var(--rule-2)}
+.tabs{display:flex;gap:0;flex-wrap:wrap}
+.scope-range{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);cursor:pointer}
+.scope-range .sr-sep{opacity:.6}
+.scope-range .sr-dates{font-size:11px;color:var(--ink-3)}
+#rangesel{font:inherit;font-size:12px;font-family:"IBM Plex Mono",Menlo,monospace;
+  color:var(--ink);background:var(--surface);border:1px solid var(--rule-2);border-radius:6px;
+  padding:4px 26px 4px 10px;cursor:pointer;-webkit-appearance:none;appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink-3) 50%),linear-gradient(135deg,var(--ink-3) 50%,transparent 50%);
+  background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+#rangesel:hover{border-color:var(--accent);color:var(--ink)}
+#rangesel:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.tabs button{font:inherit;font-size:13px;padding:9px 15px;border:0;background:none;
+  color:var(--ink-3);cursor:pointer;margin-bottom:-1px;border-bottom:2px solid transparent}
+.tabs button:hover{color:var(--ink)}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);
+  font-weight:600}
+.tabs .badge{display:inline-block;min-width:15px;margin-left:7px;padding:0 5px;
+  border-radius:8px;background:var(--critical);color:#fff;font-size:10px;font-weight:600;
+  font-family:"IBM Plex Mono",Menlo,monospace;vertical-align:1px}
+/* Segmented control: one bordered group, dividers between, active segment filled. */
+.ranges{display:flex;gap:0;align-items:center;border:1px solid var(--rule-2);border-radius:6px;
+  overflow:hidden;background:var(--surface)}
+.ranges a{font-size:12px;padding:5px 11px;text-decoration:none;color:var(--ink-2);
+  font-family:"IBM Plex Mono",Menlo,monospace;border-left:1px solid var(--rule)}
+.ranges a:first-child{border-left:0}
+.ranges a:hover{background:var(--surface-2);color:var(--ink)}
+.ranges a[aria-current="true"]{background:var(--accent);color:#fff}
+.ranges .lab{display:none}
+.snapshot{font-size:11.5px;color:var(--ink-3)}
+.snapshot code{font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;
+  background:var(--surface-2);border:1px solid var(--rule);border-radius:2px;padding:0 4px}
+
+/* --- change vs the previous window -------------------------------------- */
+.delta{font-size:12.5px;font-weight:500;margin-left:7px;white-space:nowrap}
+.delta.up{color:var(--critical-ink)}
+.delta.down{color:var(--good-ink)}
+.delta.flat{color:var(--ink-3)}
+
+/* --- urgency: a SHAPE, a colour and a word — never colour alone. The glyph
+   escalates (△ soon, ▲ now) so severity survives in monochrome and for any kind
+   of colour blindness; there is no red/green pair anywhere. --------------- */
+.urg{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;
+  letter-spacing:.07em;text-transform:uppercase}
+.urg .dot{width:auto;height:auto;border-radius:0;flex:none;font-size:11px;line-height:1}
+.urg .dot::before{content:"·"}
+.urg.now{color:var(--critical-ink)}      .urg.now .dot::before{content:"▲"}
+.urg.soon{color:var(--serious-ink)}      .urg.soon .dot::before{content:"△"}
+.urg.consider{color:var(--ink-3)}        .urg.consider .dot::before{content:"·"}
+
+/* --- where a command is typed, in the glyph the reader already associates
+   with that surface: $ a shell, / an in-session command, a gear for a config
+   edit. The word is always spelled out beside it. --------------------------- */
+.cmd{display:inline-flex;align-items:stretch;font-family:"IBM Plex Mono",Menlo,monospace;
+  font-size:11.5px;border:1px solid var(--rule-2);border-radius:3px;overflow:hidden;
+  white-space:nowrap;max-width:100%}
+.cmd .sigil{padding:2px 7px;font-weight:600;background:var(--surface-2);
+  border-right:1px solid var(--rule-2)}
+.cmd .text{padding:2px 8px;color:var(--ink);overflow:hidden;text-overflow:ellipsis}
+.cmd.terminal .sigil{color:var(--accent)}
+.cmd.session .sigil{color:var(--good-ink)}
+.cmd.config .sigil{color:var(--serious-ink)}
+.cmd-where{font-size:11px;color:var(--ink-3);margin-left:9px;white-space:nowrap}
+
+/* --- recommendations ----------------------------------------------------- */
+.actnow{display:flex;align-items:baseline;gap:10px;margin:0 0 4px}
+.actnow h2{margin:0}
+.actnow .count{font-size:11.5px;color:var(--ink-3)}
+.recs{display:flex;flex-direction:column;border:1px solid var(--rule);
+  border-radius:3px;background:var(--surface);overflow:hidden}
+.rec{display:grid;grid-template-columns:auto 1fr auto;gap:15px;align-items:baseline;
+  padding:15px 18px;border-bottom:1px solid var(--rule);border-left:3px solid transparent}
+.rec:last-child{border-bottom:0}
+.rec:hover{background:var(--surface-2)}
+.rec.now{border-left-color:var(--critical)}
+.rec.soon{border-left-color:var(--serious)}
+.rec.consider{border-left-color:var(--rule-2)}
+.rec .n{font-size:11px;color:var(--ink-3);font-family:"IBM Plex Mono",Menlo,monospace;
+  padding-top:2px}
+.rec .head{display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;margin-bottom:5px}
+.rec h4{margin:0;font-size:13.5px;font-weight:600}
+.rec p{margin:0 0 8px;font-size:12.5px;color:var(--ink-2)}
+.rec .right{text-align:right;white-space:nowrap;padding-top:2px}
+.rec .tok{font-size:13px;font-weight:600;font-family:"IBM Plex Mono",Menlo,monospace;
+  font-variant-numeric:tabular-nums}
+.rec .eff{font-size:11px;color:var(--ink-3)}
+.idle{font-size:12.5px;color:var(--ink-2);margin:0 0 6px}
+.idle code{font-family:"IBM Plex Mono",Menlo,monospace;font-size:11.5px}
+[hidden]{display:none!important}
+button.refresh{
+  font:inherit;font-size:12px;padding:4px 11px;border:1px solid var(--rule-2);
+  border-radius:3px;background:var(--surface);color:var(--ink-2);cursor:pointer}
+button.refresh:hover{background:var(--surface-2);color:var(--ink)}
+button.refresh[aria-busy="true"]{opacity:.55;cursor:progress}
+
+.verdict{padding:30px 0 26px;border-bottom:1px solid var(--rule)}
+.verdict .eyebrow{font-size:10.5px;font-weight:600;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--critical-ink);margin-bottom:12px}
+.verdict p{margin:0;max-width:34em;font-size:20px;line-height:1.45;text-wrap:balance}
+.verdict strong{font-weight:600}
+.verdict .sub{margin-top:12px;font-size:13.5px;color:var(--ink-2);max-width:46em}
+
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));
+  border-bottom:1px solid var(--rule)}
+.tile{padding:20px 22px 20px 0}
+.tile+.tile{padding-left:22px;border-left:1px solid var(--rule)}
+.tile .k{font-size:11px;color:var(--ink-3);letter-spacing:.04em;text-transform:uppercase}
+.tile .v{font-family:"Manrope","IBM Plex Sans",system-ui,sans-serif;font-size:30px;
+  font-weight:700;line-height:1.1;margin-top:8px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.tile .v .unit{font-size:16px;color:var(--ink-3)}
+.tile .n{font-size:12px;color:var(--ink-2);margin-top:4px}
+
+section{padding:34px 0 0}
+h2{font-family:"Manrope","IBM Plex Sans",system-ui,sans-serif;font-size:12px;font-weight:700;
+  letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2);margin:0 0 5px;
+  display:flex;align-items:center;gap:9px}
+/* Signature eyebrow tick: a short accent bar leading every SECTION heading
+   (not the drawer's brand h2, which is scoped out). */
+section h2::before{content:"";width:3px;height:13px;background:var(--accent);border-radius:2px;flex:none}
+.lede{margin:0 0 20px;font-size:13.5px;color:var(--ink-2);max-width:62em}
+.duo{display:grid;grid-template-columns:1.05fr 1fr;gap:22px;align-items:start}
+@media (max-width:900px){.duo{grid-template-columns:1fr}}
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:3px;
+  padding:20px;box-shadow:var(--shadow)}
+.panel h3{margin:0 0 2px;font-size:14px;font-weight:600}
+.panel .note{margin:0 0 18px;font-size:12px;color:var(--ink-3)}
+
+.bands{display:flex;flex-direction:column;gap:11px}
+.band-row{display:grid;grid-template-columns:82px 1fr;gap:12px;align-items:center}
+.band-lab{font-size:12px;color:var(--ink-2);text-align:right}
+.band-track{height:26px;display:flex;align-items:center;gap:9px}
+.band-bar{height:100%;border-radius:0 4px 4px 0;flex:none;transition:filter .12s ease}
+.band-row:hover .band-bar{filter:brightness(1.08)}
+.band-val{font-size:12px;white-space:nowrap}
+.band-val .pct{color:var(--ink-3)}
+.threshold{margin-top:16px;padding-top:13px;border-top:1px solid var(--rule);
+  font-size:12.5px;color:var(--ink-2)}
+.threshold b{color:var(--ink);font-weight:600}
+
+.plot{position:relative;height:176px;border-bottom:1px solid var(--rule-2)}
+.gridline{position:absolute;left:0;right:0;border-top:1px solid var(--rule)}
+.gridline span{position:absolute;left:0;top:-8px;font-size:10.5px;color:var(--ink-3);
+  background:var(--surface);padding-right:6px}
+.cols{position:absolute;inset:0 0 0 42px;display:flex;align-items:flex-end;gap:3px}
+.col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%}
+.col i{display:block;width:100%;background:var(--accent);border-radius:3px 3px 0 0;
+  min-height:2px;transition:filter .12s ease}
+.col:hover i{filter:brightness(1.12)}
+.col.peak i{background:var(--critical)}
+.xaxis{display:flex;gap:3px;margin:7px 0 0 42px}
+.xaxis span{flex:1;font-size:10px;color:var(--ink-3);text-align:center}
+.peaklab{margin-top:14px;font-size:12.5px;color:var(--ink-2)}
+.peaklab b{color:var(--critical-ink);font-weight:600}
+
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:3px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:1080px}
+thead th{text-align:right;font-size:10.5px;font-weight:600;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-3);padding:12px 12px 10px;
+  border-bottom:1px solid var(--rule-2);white-space:nowrap;background:var(--surface-2)}
+thead th:first-child,thead th:nth-child(2),thead th:last-child{text-align:left}
+tbody td{padding:11px 12px;border-bottom:1px solid var(--rule);font-size:12.5px;
+  text-align:right;white-space:nowrap}
+tbody td:first-child,tbody td:nth-child(2),tbody td:last-child{text-align:left}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--surface-2)}
+td.sev{border-left:3px solid transparent}
+tr.crit td.sev{border-left-color:var(--critical)}
+tr.ser td.sev{border-left-color:var(--serious)}
+tr.warn td.sev{border-left-color:var(--warning)}
+tr.ok td.sev{border-left-color:var(--good)}
+td.sev .proj{font-size:11px;color:var(--ink-3)}
+/* The id is the way in: every row links to its own turn-by-turn breakdown, so
+   "285 turns, 74.9M" stops being a verdict with no explanation. */
+a.drill{color:var(--accent);text-decoration:none;border-bottom:1px dotted var(--rule-2);cursor:pointer}
+a.drill:hover{border-bottom-style:solid}
+
+/* sortable session-table headers */
+#sesshead th[data-sort]{cursor:pointer;user-select:none;white-space:nowrap}
+#sesshead th[data-sort]:hover{color:var(--ink)}
+#sesshead th[data-sort]::after{content:"";opacity:.35;margin-left:4px;font-size:9px}
+#sesshead th[aria-sort="ascending"]::after{content:"\2191";opacity:1}
+#sesshead th[aria-sort="descending"]::after{content:"\2193";opacity:1}
+#sesshead th[aria-sort]:not([aria-sort="none"]){color:var(--ink)}
+
+/* --- session drawer: the drilldown slides over the dashboard, so opening a
+   session never loses the list you were reading. No back-link, no refresh —
+   closing the drawer IS the way back, and the dashboard behind it is live. --- */
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:40;opacity:0;
+  transition:opacity .18s ease}
+.scrim.show{opacity:1}
+.drawer{position:fixed;top:0;right:0;height:100vh;width:min(960px,94vw);
+  background:var(--plane);border-left:1px solid var(--rule-2);
+  box-shadow:-10px 0 40px rgba(0,0,0,.22);z-index:41;transform:translateX(100%);
+  transition:transform .22s ease;overflow-y:auto;overscroll-behavior:contain}
+.drawer.show{transform:translateX(0)}
+.dhead{position:sticky;top:0;z-index:2;display:flex;align-items:baseline;gap:12px;
+  padding:18px 30px 14px;background:var(--plane);border-bottom:1px solid var(--rule)}
+.dhead h2{margin:0;font-size:17px;letter-spacing:-.01em;text-transform:none;display:flex;align-items:baseline;gap:9px;font-weight:600}
+.dhead .mark{font-size:15px}
+.dhead .dscope{font-size:12px;color:var(--ink-3);font-family:"IBM Plex Mono",Menlo,monospace}
+.dhead .dright{margin-left:auto;display:flex;gap:12px;align-items:center}
+.dhead a.asjson{margin:0}
+.dclose{border:1px solid var(--rule-2);background:var(--surface);color:var(--ink-2);
+  border-radius:3px;width:28px;height:28px;font-size:16px;line-height:1;cursor:pointer;padding:0}
+.dclose:hover{background:var(--surface-2);color:var(--ink)}
+.dbody{padding:8px 30px 60px}
+.dbody h3{font-size:12.5px;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);
+  margin:26px 0 8px;font-weight:600}
+.dbody .h3row{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.dtiles{display:flex;flex-wrap:wrap;gap:0;margin:14px 0 4px;border-top:1px solid var(--rule);
+  border-bottom:1px solid var(--rule)}
+.dtile{padding:14px 18px 14px 0}
+.dtile+.dtile{padding-left:18px;border-left:1px solid var(--rule)}
+.dtile .k{font-size:10.5px;color:var(--ink-3);letter-spacing:.04em;text-transform:uppercase}
+.dtile .v{font-size:21px;font-weight:600;margin-top:5px;letter-spacing:-.02em}
+.dtile .n{font-size:11.5px;color:var(--ink-2);margin-top:2px}
+.dbanner{margin:14px 0 2px;padding:8px 12px;border:1px solid var(--rule-2);
+  border-left:3px solid var(--accent);border-radius:3px;background:var(--surface-2);
+  font-size:12px;color:var(--ink-2)}
+.dbanner b{color:var(--ink);font-weight:600}
+.sortby{font-size:11px;color:var(--ink-3)}
+.sortbtn{font:inherit;font-size:11px;color:var(--ink-2);background:transparent;
+  border:1px solid var(--rule-2);border-radius:3px;padding:3px 9px;margin-left:5px;cursor:pointer}
+.sortbtn:hover{background:var(--surface-2);color:var(--ink)}
+.sortbtn[aria-current="true"]{background:var(--ink);color:var(--plane);border-color:var(--ink)}
+.dwrapt{overflow-x:auto;border:1px solid var(--rule);border-radius:3px;background:var(--surface)}
+.dbody table{border-collapse:collapse;width:100%}
+.dbody thead th{text-align:right;font-size:10px;font-weight:600;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-3);padding:9px 11px 8px;white-space:nowrap;
+  border-bottom:1px solid var(--rule-2);background:var(--surface-2)}
+.dbody thead th:first-child,.dbody thead th:last-child{text-align:left}
+.dbody tbody td{padding:7px 11px;border-bottom:1px solid var(--rule);font-size:12px;
+  text-align:right;white-space:nowrap}
+.dbody tbody td:first-child,.dbody tbody td:last-child{text-align:left}
+.dbody tbody td:last-child{white-space:normal;color:var(--ink-2);
+  font-family:"IBM Plex Mono",Menlo,monospace;font-size:11px;max-width:440px}
+.dbody tbody tr:last-child td{border-bottom:0}
+.dbody tbody tr:hover td{background:var(--surface-2)}
+.tnum{font-family:"IBM Plex Mono",Menlo,monospace;color:var(--ink-3)}
+.dbar{display:inline-block;height:7px;border-radius:2px;background:var(--b3);vertical-align:1px}
+.dfoot{margin-top:22px;padding-top:16px;border-top:1px solid var(--rule);
+  font-size:11.5px;color:var(--ink-3);line-height:1.5}
+.dfoot b{color:var(--ink-2);font-weight:600}
+.dloading{padding:60px 0;text-align:center;color:var(--ink-3);font-size:13px}
+@media (prefers-reduced-motion: reduce){
+  .drawer{transition:none}.scrim{transition:none}
+}
+/* Two links, two readers: the id opens a page for a person, `json` hands the
+   same drilldown to anything that wants to analyse it. */
+a.asjson{margin-left:7px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);text-decoration:none;border:1px solid var(--rule-2);
+  border-radius:2px;padding:0 4px}
+a.asjson:hover{color:var(--ink);background:var(--surface-2)}
+.kindchip{font-size:10.5px;padding:1px 6px;border-radius:2px;
+  border:1px solid var(--rule-2);color:var(--ink-2)}
+/* High/elevated numbers wear a small leading caret AND weight AND colour, so a
+   "this is large" cell is not signalled by a faint red tint alone. */
+.hot{color:var(--critical-ink);font-weight:700}
+.hot::before{content:"▲ ";font-size:9px;vertical-align:1px}
+.warm{color:var(--serious-ink);font-weight:600}
+.warm::before{content:"△ ";font-size:9px;vertical-align:1px}
+/* The verdict chip: SHAPE + colour + the action word. Glyphs escalate
+   ✓ ok · △ warn · ▲ serious · ■ critical — legible with no colour at all. */
+.act{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+.act .dot{width:auto;height:auto;border-radius:0;flex:none;font-size:11px;line-height:1;font-weight:700}
+.act.crit{color:var(--critical-ink)} .act.crit .dot::before{content:"■"}
+.act.ser{color:var(--serious-ink)}   .act.ser .dot::before{content:"▲"}
+.act.warn{color:var(--warning-ink)}  .act.warn .dot::before{content:"△"}
+.act.ok{color:var(--good-ink)}       .act.ok .dot::before{content:"✓"}
+
+.findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:18px}
+.find{background:var(--surface);border:1px solid var(--rule);border-radius:3px;
+  padding:18px;box-shadow:var(--shadow)}
+.find .top{display:flex;align-items:baseline;gap:9px;margin-bottom:3px}
+.find .cnt{font-size:23px;font-weight:600;letter-spacing:-.02em}
+.find h4{margin:0;font-size:13px;font-weight:600}
+.find .cost{font-size:12px;color:var(--ink-2);margin-bottom:11px}
+.find p{margin:0;font-size:12.5px;color:var(--ink-2);line-height:1.5}
+.find .fix{margin-top:12px;padding-top:11px;border-top:1px solid var(--rule);font-size:12.5px}
+.find .fix b{font-weight:600;color:var(--ink)}
+
+.ladder{display:flex;flex-direction:column}
+.rung{display:grid;grid-template-columns:112px 1fr 84px;gap:12px;align-items:center;
+  padding:5px 0;border-bottom:1px solid var(--rule);font-size:12px}
+.rung:last-child{border-bottom:0}
+.rung .when{color:var(--ink-3)}
+.rung .meter{height:8px;background:var(--surface-2);border-radius:2px;overflow:hidden}
+.rung .meter i{display:block;height:100%;background:var(--accent);border-radius:2px}
+.rung.last .meter i{background:var(--critical)}
+.rung .amt{text-align:right}
+.rung.last .amt{color:var(--critical-ink);font-weight:600}
+
+.empty{padding:26px 0;color:var(--ink-2);font-size:13.5px}
+footer{margin-top:42px;padding-top:18px;border-top:1px solid var(--rule);
+  font-size:12px;color:var(--ink-3);max-width:64em}
+footer b{color:var(--ink-2);font-weight:600}
+#tip{position:fixed;z-index:50;pointer-events:none;opacity:0;transition:opacity .1s ease;
+  background:var(--ink);color:var(--plane);font-size:11.5px;padding:6px 9px;
+  border-radius:3px;white-space:nowrap;
+  font-family:"IBM Plex Mono",Menlo,monospace}
+#tip.on{opacity:1}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="masthead">
+    <h1><span class="mark">🐕</span><span class="wm">Token<span class="ac">Dog</span></span><span class="led" id="led" title=""></span></h1>
+    <span class="right">
+      <span class="stamp num" id="stamp"></span>
+      <button class="refresh" id="refresh" type="button">Refresh</button>
+    </span>
+  </div>
+
+  <!-- Range is a GLOBAL control, so it sits in its OWN row above the tab bar:
+       everything below (Overview, Connectors, …) is scoped to it. One control
+       that both selects the range and displays its from→to dates. -->
+  <div class="rangerow">
+    <label class="scope-range">
+      <span id="scopetxt" class="mono"></span>
+      <span class="sr-sep">·</span>
+      <select id="rangesel" aria-label="Time range for all tabs"></select>
+      <span id="rangedates" class="sr-dates num"></span>
+    </label>
+  </div>
+  <div class="bar">
+    <div class="tabs" role="tablist" id="tabs"></div>
+  </div>
+
+  <div class="verdict">
+    <div class="eyebrow">What the window actually bought</div>
+    <p id="verdict"></p>
+    <p class="sub" id="verdict-sub"></p>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="pane" id="pane-overview">
+  <section id="actnow-section" hidden>
+    <div class="actnow"><h2>Act now</h2><span class="count" id="actnow-count"></span></div>
+    <p class="lede">Ranked by urgency, then size. Urgency weighs what acting COSTS as well as what
+      it saves — a keystroke that frees 300K outranks a bigger number that costs you your working
+      state.</p>
+    <div class="recs" id="recs-top"></div>
+  </section>
+
+  <section>
+    <h2>Diagnosis</h2>
+    <p class="lede">Where the tokens went, and when.</p>
+    <div class="duo">
+      <div class="panel">
+        <h3>Cost by window occupancy</h3>
+        <p class="note">Each metered turn grouped by how full its context window was.</p>
+        <div class="bands" id="bands"></div>
+        <div class="threshold" id="threshold"></div>
+      </div>
+      <div class="panel">
+        <h3>Daily input</h3>
+        <p class="note">Local time. One column per day; height is input tokens.</p>
+        <div class="plot" id="plot"><div class="cols" id="cols"></div></div>
+        <div class="xaxis" id="xaxis"></div>
+        <p class="peaklab" id="peaklab"></p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Sessions · act on these</h2>
+    <p class="lede"><strong>Read Σ</strong> is context summed across every turn in range — a
+      stateless model re-reads the whole window each turn, so it is roughly turns × context, NOT
+      the size of the context (that's <strong>Peak</strong>). <strong>Burn</strong> is Read Σ per
+      minute (marked <span class="mono">~</span> when only a minute or two of activity makes it
+      provisional).
+      <strong>Ctx now</strong> is the context still live — clearing or compacting
+      starts a fresh one inside the same file, and one transcript here has held eleven.
+      <strong>Ctx in window</strong> is avg/peak across every context the session held inside
+      the selected range: what it cost here, rather than what it is now.
+      <strong>Click a session id</strong> for its turn-by-turn breakdown — what entered the window
+      at each turn and what that addition then cost. The <strong>json</strong> badge beside it
+      returns the same drilldown as data, for handing to something that will analyse it. On the
+      command line: <span class="mono">tokendog session &lt;id&gt;</span>, plus
+      <span class="mono">--json</span>. <em>Open for</em> is wall-clock from a session's first turn to its last;
+      <em>Idle</em> is time since its last turn. Rows marked <span class="mono">headless</span>
+      are non-interactive runs whose processes have exited — nothing is left to close, so their
+      fix belongs to whatever spawns them.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr id="sesshead">
+          <th data-sort="id">Session</th>
+          <th data-sort="last_ts" aria-sort="descending">Last used</th>
+          <th data-sort="headless">Kind</th>
+          <th data-sort="turns">Turns</th>
+          <th data-sort="input" data-tip="Sum of context across the turns in range. A stateless model re-reads the whole window every turn, so this ≈ turns × context — NOT the size of the context (see Peak).">Read Σ</th>
+          <th data-sort="burn_per_min" data-tip="Read Σ ÷ the minutes those turns span. Over a short span it is a provisional rate (marked ~), not a steady per-minute figure.">Burn</th>
+          <th data-sort="ratio">In:Out</th>
+          <th data-sort="curavg">Ctx now</th><th data-sort="curpeak">Peak now</th>
+          <th data-sort="avg_context">Ctx in window</th><th data-sort="resets">Resets</th>
+          <th data-sort="span_hours">Open for</th><th data-sort="idle_hours">Idle</th><th>Do this</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  </div><!-- /overview split -->
+  <div class="pane" id="pane-findings" hidden>
+  <section>
+    <h2>Findings</h2>
+    <p class="lede" id="findings-lede"></p>
+    <div class="findings" id="findings"></div>
+  </section>
+  </div><!-- /findings -->
+  <div class="pane" id="pane-overview-tail">
+
+  </div><!-- /overview -->
+
+  <div class="pane" id="pane-tools" hidden>
+    <section>
+      <h2>Connectors · MCP and plugins</h2>
+      <p class="lede">Every tool a connector ships is resident on each turn whether or not it is
+        called, so an unused connector is a fixed tax on every prompt. Grouped by connector
+        because that is the unit you can switch off.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>Connector</th><th>Scope</th><th>On</th><th>Used/ships</th><th>Calls</th>
+            <th>Turns resident</th><th>Calls/1k</th><th>Schema</th><th>Carried</th><th>Verdict</th>
+          </tr></thead>
+          <tbody id="conn-rows"></tbody>
+        </table>
+      </div>
+      <p class="lede" id="conn-note" style="margin-top:18px"></p>
+      <div id="idle-block"></div>
+    </section>
+  </div>
+
+  <div class="pane" id="pane-recs" hidden>
+    <section>
+      <h2>Recommendations</h2>
+      <p class="lede">Ranked by tokens involved. Effort is stated because it is the other half of
+        the decision: a config edit and losing your working state are not the same price.</p>
+      <div class="recs" id="recs"></div>
+    </section>
+  </div>
+
+  <div class="pane" id="pane-outcomes" hidden>
+    <section>
+      <div class="h3row"><h2>Outcomes — what shipped, and what it cost</h2>
+        <span class="sortby"><label style="cursor:pointer"><input type="checkbox" id="ocgh"> resolve PRs via GitHub CLI</label></span>
+      </div>
+      <p class="lede">Each merged PR with the AI sessions that plausibly fed it, and their cost. A
+        heuristic join — in-window, same repo, overlapping files, PR from the merge subject (or
+        <span class="mono">gh</span> for squash-merges). Scoped to <strong>this machine's</strong>
+        sessions and this clone's git email, so a PR co-authored across laptops shows only the share
+        done here. Reload with the range selector to change the window.</p>
+      <div id="ocsummary" class="dbanner" hidden></div>
+      <div class="tablewrap" style="margin-top:14px"><table>
+        <thead><tr><th>Outcome</th><th>Repo</th><th>Link</th><th>Commits</th><th>Sessions</th><th>Turns</th><th>Est $</th></tr></thead>
+        <tbody id="ocrows"><tr><td colspan="7"><span class="empty">Open this tab to compute outcomes (runs git).</span></td></tr></tbody>
+      </table></div>
+      <p class="note" id="ocnote"></p>
+    </section>
+  </div>
+
+  <div class="pane" id="pane-cost" hidden>
+    <section>
+      <h2>Cost composition — where the tokens go</h2>
+      <p class="lede">The four billing buckets, not one total: <strong>cache write</strong> is what grows
+        with context churn and the one you can move; cache read is a tenth the price of fresh input;
+        output is 5×. Est $ is API list-price weight, not an invoice — on a subscription there is no
+        per-token charge; read it as relative weight.</p>
+      <h3>By model</h3>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Model</th><th>Calls</th><th>Cache write</th><th>Cache read</th><th>Output</th><th>Fresh in</th><th>Est $</th></tr></thead>
+        <tbody id="costmodel"><tr><td colspan="7"><span class="empty">Open this tab to compute cost.</span></td></tr></tbody>
+      </table></div>
+      <h3 style="margin-top:24px">Per-tool payload volume</h3>
+      <p class="note" style="margin-top:0">How much text each tool put into the context (approximate).
+        There is no per-tool dollar figure — cost is per metered turn, and a turn carries no tool name.</p>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Tool</th><th>Calls</th><th>Payload tokens</th></tr></thead>
+        <tbody id="costtool"></tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <div class="pane" id="pane-pipelines" hidden>
+    <section>
+      <h2>Glitch pipelines — spend by what ran</h2>
+      <p class="lede">Claude spend attributed to each Glitch pipeline, read from
+        <span class="mono">.glitch/runs/*.json</span>. <strong>Exact</strong>, not heuristic: Glitch
+        stamps each stage's <span class="mono">--session-id</span>, which is the transcript tokendog
+        priced. <strong>Est $</strong> is tokendog's list-price weight; <strong>Glitch $</strong> is
+        Glitch's own per-stage figure, for comparison.</p>
+      <div id="plsummary" class="dbanner" hidden></div>
+      <div class="tablewrap" style="margin-top:14px"><table>
+        <thead><tr><th>Pipeline</th><th>Runs</th><th>Stages</th><th>Sessions</th><th>Read Σ</th><th>Est $</th><th>Glitch $</th></tr></thead>
+        <tbody id="plrows"><tr><td colspan="7"><span class="empty">Open this tab to read Glitch run files.</span></td></tr></tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <div class="pane" id="pane-errors" hidden>
+    <section>
+      <h2>Tool errors — what fails, and how</h2>
+      <p class="lede">A failing tool bills twice: the failed call, then the bigger-context retry. Which
+        tools fail, how often, and the dominant failure category — matched by pattern, no model call.
+        <strong>⚠</strong> marks 5+ calls failing 20%+ of the time: a pattern, not a one-off.</p>
+      <div id="ersummary" class="dbanner" hidden></div>
+      <div class="tablewrap" style="margin-top:14px"><table>
+        <thead><tr><th>Tool</th><th>Calls</th><th>Errors</th><th>Rate</th><th>Mostly</th><th>Example</th></tr></thead>
+        <tbody id="errows"><tr><td colspan="6"><span class="empty">Open this tab to scan tool results.</span></td></tr></tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <div class="pane" id="pane-detail" hidden>
+  <section id="ladder-section" hidden>
+    <h2>The escalation</h2>
+    <p class="lede" id="ladder-lede"></p>
+    <div class="panel"><div class="ladder" id="ladder"></div></div>
+  </section>
+
+  </div><!-- /detail -->
+
+  <footer>
+    <b>There are no dollar figures here, by design.</b> Every number is a token count taken from
+    the per-turn usage the runtime records in its own transcripts — the same counts that were
+    metered. On a subscription there is no per-token charge, and these are not a rate-limit proxy
+    either: quota accounting does not apply the price weights that make output 5&times; input and a
+    cache read 0.1&times;. Read them as relative weight, which is all that is needed to see where a
+    window went.
+    <br><br>
+    <b>Occupancy is what a turn had to be given</b> — cache read plus cache write plus fresh input.
+    Output is excluded: it came back, it was not carried. Roll-ups key on transcript rather than
+    session id, because a resumed session and its subagent transcripts share one id while each
+    holds a context that grew on its own.
+  </footer>
+
+</div>
+<div id="tip" role="status" aria-live="polite"></div>
+
+<script>
+const D = __TOKENDOG_DATA__;
+
+/* Render only once the markup exists. Every el() call below assumes the
+   document is already parsed; if this script is ever evaluated first — a host
+   that relocates scripts, a wrapper that injects its own — the first
+   assignment throws on null and NOTHING renders, which looks exactly like a
+   blank page with its static headings still in place.
+
+   One guard around the whole render, not one per section: the blocks share
+   bindings (the headline, the connector list, the findings splits), so
+   isolating them into separate scopes breaks the later ones. A failure is
+   reported ON THE PAGE rather than only in a console nobody has open. */
+function render() {
+
+const fmt = n => n == null ? "—"
+  : n >= 1e9 ? (n/1e9).toFixed(2)+"B"
+  : n >= 1e6 ? (n/1e6).toFixed(1)+"M"
+  : n >= 1e3 ? Math.round(n/1e3)+"K" : String(n);
+const hrs = h => h == null ? "—" : h >= 24 ? Math.round(h/24)+"d" : h.toFixed(1)+"h";
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const el = id => document.getElementById(id);
+
+/* ── masthead ─────────────────────────────────────────────────────────── */
+/* The stamp is build metadata ONLY — no date range. The one date range on the
+   page lives in the range control (below), so nothing competes with it. */
+el("stamp").textContent = "generated " + (D.generated_at || "").replace("T", " ").slice(11, 16)
+  + (D.build_ms ? " · " + D.build_ms + " ms" : "");
+
+/* ── verdict ──────────────────────────────────────────────────────────── */
+const H = D.headline, heavy = H.heavy, warn = H.warn;
+el("verdict").innerHTML = heavy.turns
+  ? `<strong>${heavy.turns.toLocaleString()} turns</strong> carried
+     ${fmt(heavy.threshold)} or more of context. They cost
+     <strong>${fmt(heavy.tokens)} tokens</strong> — <strong>${heavy.pct_tokens}%</strong>
+     of the window — from ${heavy.pct_turns}% of the turns.`
+  : `No turn in this window exceeded ${fmt(heavy.threshold)} of context. Occupancy is not
+     what this window cost you.`;
+const worst = D.sessions[0], best = [...D.sessions].reverse()
+  .find(s => s.ratio != null);
+el("verdict-sub").innerHTML =
+  `Every token in a window is re-billed on every following turn, so cost tracks how full the
+   window is, not how much work was asked for.` +
+  (worst && best && worst !== best && worst.ratio && best.ratio
+    ? ` Across ${D.session_count} active sessions the relationship holds: the fullest ran at
+        ${worst.ratio} input tokens per output token, the emptiest at ${best.ratio}.` : "");
+
+/* ── tiles ────────────────────────────────────────────────────────────── */
+const sc = D.severity_counts || {};
+const needing = (sc.crit || 0) + (sc.ser || 0) + (sc.warn || 0);
+/* The masthead LED = worst live severity, so the header itself is the alarm. */
+(() => {
+  const led = el("led"); if (!led) return;
+  const worst = sc.crit ? "crit" : sc.ser ? "ser" : sc.warn ? "warn" : "";
+  led.className = "led" + (worst ? " " + worst : "");
+  led.title = worst
+    ? `${needing} session(s) need action — ${sc.crit||0} critical, ${sc.ser||0} serious, ${sc.warn||0} pipeline`
+    : "all healthy in this window";
+})();
+
+el("tiles").innerHTML = [
+  ["Input, " + D.window_days + " days", fmt(H.input), "", H.turns.toLocaleString() + " metered turns"],
+  ["Output, " + D.window_days + " days", fmt(H.output), "", "the work actually returned"],
+  ["Input per output token", H.ratio == null ? "—" : H.ratio, H.ratio == null ? "" : ":1",
+   "re-reading, not generating"],
+  ["Sessions needing action", needing, " / " + D.session_count,
+   `${sc.crit || 0} critical · ${sc.ser || 0} serious · ${sc.warn || 0} pipeline`],
+].map(([k, v, unit, n], i) => `<div class="tile">
+    <div class="k">${esc(k)}</div>
+    <div class="v num${i === 2 && H.ratio >= 200 ? " hot" : ""}">${esc(v)}<span class="unit">${esc(unit)}</span></div>
+    <div class="n">${esc(n)}</div></div>`).join("");
+
+/* ── bands: ordered tiers → single-hue ordinal ramp ───────────────────── */
+const RAMP = ["--b1", "--b2", "--b3", "--b4", "--b5"];
+const bmax = Math.max(1, ...D.bands.map(b => b.tokens));
+el("bands").innerHTML = D.bands.map((b, i) => `
+  <div class="band-row" data-tip="${b.turns.toLocaleString()} turns · ${fmt(b.tokens)} tokens · ${b.pct_tokens}%">
+    <div class="band-lab num">${esc(b.band)}</div>
+    <div class="band-track">
+      <span class="band-bar" style="width:${(b.tokens / bmax * 72).toFixed(2)}%;background:var(${RAMP[i % RAMP.length]})"></span>
+      <span class="band-val num">${fmt(b.tokens)} <span class="pct">${b.pct_tokens}%</span></span>
+    </div>
+  </div>`).join("");
+el("threshold").innerHTML = `Turns at <b>${fmt(warn.threshold)} and above</b> were
+  ${warn.pct_turns}% of turns and carried <b>${warn.pct_tokens}%</b> of the tokens.
+  That crossover is where the statusline turns amber.`;
+
+/* ── daily: one series, so one colour; the peak day is emphasised ─────── */
+const daily = D.daily || [];
+if (daily.length) {
+  const dmax = Math.max(...daily.map(d => d.input)) * 1.12 || 1;
+  const peakDay = daily.reduce((a, b) => b.input > a.input ? b : a);
+  el("cols").innerHTML = daily.map(d => {
+    const lab = new Date(d.date + "T12:00:00")
+      .toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    return `<div class="col${d === peakDay ? " peak" : ""}" data-tip="${esc(lab)} · ${fmt(d.input)} input · ${d.turns} turns">
+              <i style="height:${(d.input / dmax * 100).toFixed(2)}%"></i></div>`;
+  }).join("");
+  el("xaxis").innerHTML = daily.map((d, i) =>
+    `<span class="num">${(i % 3 === 0 || i === daily.length - 1) ? d.date.slice(5) : ""}</span>`).join("");
+  /* Rules at a quarter, half and three-quarters of the scale. Nothing at the
+     very top: its label would sit outside the plot and collide with the note. */
+  [0.75, 0.5, 0.25].forEach(f => {
+    const g = document.createElement("div");
+    g.className = "gridline";
+    g.style.top = ((1 - f) * 100).toFixed(2) + "%";
+    g.innerHTML = `<span class="num">${fmt(Math.round(dmax * f))}</span>`;
+    el("plot").appendChild(g);
+  });
+  const total = daily.reduce((s, d) => s + d.input, 0);
+  el("peaklab").innerHTML = `Peak <b>${esc(new Date(peakDay.date + "T12:00:00")
+    .toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }))}:
+    ${fmt(peakDay.input)}</b> — ${Math.round(peakDay.input / total * 100)}% of these
+    ${daily.length} days.`;
+} else {
+  el("plot").innerHTML = '<p class="empty">No turns in the trend window.</p>';
+}
+
+/* ── sessions ─────────────────────────────────────────────────────────── */
+/* A reset does not close a transcript, so one file can hold many contexts —
+   eleven, in the worst case in this corpus. `Ctx now` is the live segment: what
+   the session IS. `Ctx lifetime` is every context it ever held: what it COST.
+   Reporting only the lifetime average made a session that had just been
+   compacted look exactly as bad as one that never had been. */
+const cur = s => ({
+  avg: (s.current && s.current.avg_context) || s.avg_context,
+  peak: (s.current && s.current.peak_context) || s.peak_context,
+});
+/* Burn is a rate = ReadΣ / minutes-in-window. Under ~2 minutes of activity that
+   denominator is too small to mean a steady per-minute figure — a few turns in
+   40 seconds reads as "millions/min". Mark those provisional (~, muted) with the
+   span in the tooltip, instead of presenting a rate that will swing as the
+   session keeps running. */
+const burnCell = s => {
+  if (s.burn_per_min == null) return '<td class="num">—</td>';
+  const span = s.window_minutes;
+  const provisional = span != null && span < 2;
+  const cls = provisional ? "" : (s.burn_per_min >= 5e5 ? "hot" : s.burn_per_min >= 2e5 ? "warm" : "");
+  const tip = provisional
+    ? `provisional — only ${span == null ? "<1" : span.toFixed(span < 1 ? 2 : 1)} min of activity, so this rate is not yet steady`
+    : `${fmt(s.input)} read over ${span == null ? "?" : span.toFixed(1)} min`;
+  const val = (provisional ? "~" : "") + fmt(s.burn_per_min) + "/m";
+  return `<td class="num ${cls}" data-tip="${esc(tip)}">${val}</td>`;
+};
+const shortWhen = ts => {   // last-used, compact: "14:32" today, else "Sep 8 14:32"
+  if (ts == null) return "—";
+  const d = new Date(ts * 1000), now = new Date();
+  const t = d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  return d.toDateString() === now.toDateString() ? t
+    : d.toLocaleDateString([], {month:"short", day:"numeric"}) + " " + t;
+};
+function rowHtml(s){ return `
+  <tr class="${esc(s.severity)}">
+    <td class="sev mono"><a class="drill" data-transcript="${esc(s.transcript || s.id)}"
+        href="/session/${encodeURIComponent(s.transcript || s.id)}?top=40&range=${encodeURIComponent(D.range || "")}"
+        title="turn-by-turn breakdown, in this same range">${esc(s.id)}</a
+      ><a class="asjson" href="/session/${encodeURIComponent(s.transcript || s.id)}.json?top=100&range=${encodeURIComponent(D.range || "")}"
+        target="_blank" rel="noopener" title="same drilldown as JSON">json</a
+      ><div class="proj">${esc(s.project)}</div></td>
+    <td class="num" style="color:var(--ink-2)">${esc(shortWhen(s.last_ts))}</td>
+    <td><span class="kindchip mono">${s.headless ? "headless" : "interactive"}</span></td>
+    <td class="num">${s.turns.toLocaleString()}</td>
+    <td class="num">${fmt(s.input)}</td>
+    ${burnCell(s)}
+    <td class="num ${s.ratio >= 400 ? "hot" : s.ratio >= 250 ? "warm" : ""}">${s.ratio == null ? "—" : s.ratio + ":1"}</td>
+    <td class="num ${cur(s).avg >= 400e3 ? "hot" : cur(s).avg >= 200e3 ? "warm" : ""}">${fmt(cur(s).avg)}</td>
+    <td class="num ${cur(s).peak >= 700e3 ? "hot" : cur(s).peak >= 400e3 ? "warm" : ""}">${fmt(cur(s).peak)}</td>
+    <td class="num" style="color:var(--ink-3)">${fmt(s.avg_context)} / ${fmt(s.peak_context)}</td>
+    <td class="num">${s.segments > 1 ? s.resets : "—"}</td>
+    <td class="num">${hrs(s.span_hours)}</td>
+    <td class="num">${hrs(s.idle_hours)}</td>
+    <td><span class="act ${esc(s.severity)}"><span class="dot"></span>${esc(s.action)}</span></td>
+  </tr>`; }
+
+/* Sortable table. Default: most recently used first. Every header re-sorts on
+   click and toggles direction; the value getter handles the nested/computed
+   columns (live-context avg/peak) and sorts nulls last regardless of direction. */
+const sortVal = {
+  id: s => s.id, headless: s => s.headless ? 1 : 0,
+  turns: s => s.turns, input: s => s.input, burn_per_min: s => s.burn_per_min,
+  ratio: s => s.ratio, curavg: s => cur(s).avg, curpeak: s => cur(s).peak,
+  avg_context: s => s.avg_context, resets: s => (s.segments > 1 ? s.resets : -1),
+  span_hours: s => s.span_hours, idle_hours: s => s.idle_hours, last_ts: s => s.last_ts,
+};
+let sortKey = "last_ts", sortDir = -1;   // -1 desc, +1 asc
+function renderRows(){
+  if (!D.sessions.length){
+    el("rows").innerHTML = '<tr><td colspan="14"><span class="empty">No sessions in this window.</span></td></tr>';
+    return;
+  }
+  const get = sortVal[sortKey] || sortVal.last_ts;
+  const rows = D.sessions.slice().sort((a, b) => {
+    let va = get(a), vb = get(b);
+    va = (va == null ? -Infinity : va); vb = (vb == null ? -Infinity : vb);
+    if (typeof va === "string") return sortDir * va.localeCompare(vb);
+    return sortDir * (va - vb);
+  });
+  el("rows").innerHTML = rows.map(rowHtml).join("");
+  wireDrill();
+  document.querySelectorAll("#sesshead th[data-sort]").forEach(th =>
+    th.setAttribute("aria-sort", th.dataset.sort === sortKey
+      ? (sortDir < 0 ? "descending" : "ascending") : "none"));
+}
+el("sesshead").addEventListener("click", e => {
+  const th = e.target.closest("th[data-sort]"); if (!th) return;
+  const k = th.dataset.sort;
+  if (k === sortKey) sortDir = -sortDir;
+  else { sortKey = k; sortDir = (k === "id") ? 1 : -1; }   // numbers default high→low, id A→Z
+  renderRows();
+});
+renderRows();
+
+/* ── session drawer ───────────────────────────────────────────────────────
+   The drilldown opens IN a drawer over the dashboard rather than on its own
+   page, so the list you were reading stays put behind it. It fetches the same
+   JSON the standalone page uses, scoped to the range you have selected, so the
+   drawer answers the same question as the row you clicked. */
+const drawer = el("drawer"), scrim = el("scrim"), dbody = el("dbody");
+let drawerSort = "new";          // new | old | costly
+let drawerData = null;           // last fetched session detail
+let lastFocus = null;
+
+function openDrawer(transcript) {
+  lastFocus = document.activeElement;
+  const q = "?top=200" + (D.range ? "&range=" + encodeURIComponent(D.range) : "");
+  el("djson").href = "/session/" + encodeURIComponent(transcript) + ".json" + q;
+  el("dtitle").textContent = "TokenDog";
+  el("dscope").textContent = transcript.slice(0, 8);
+  dbody.innerHTML = '<div class="dloading">loading…</div>';
+  scrim.hidden = false; drawer.hidden = false;
+  requestAnimationFrame(() => { scrim.classList.add("show"); drawer.classList.add("show"); });
+  el("dclose").focus();
+  fetch("/session/" + encodeURIComponent(transcript) + ".json" + q, { cache: "no-store" })
+    .then(r => r.json())
+    .then(det => { drawerData = det; drawerSort = "new"; renderDrawer(); })
+    .catch(err => { dbody.innerHTML = '<div class="dloading">could not load: '
+      + esc((err && err.message) || String(err)) + "</div>"; });
+}
+
+function closeDrawer() {
+  scrim.classList.remove("show"); drawer.classList.remove("show");
+  const done = () => { drawer.hidden = true; scrim.hidden = true;
+    drawer.removeEventListener("transitionend", done); };
+  drawer.addEventListener("transitionend", done);
+  setTimeout(done, 320);   // fallback when reduced-motion kills the transition
+  if (lastFocus && lastFocus.focus) lastFocus.focus();
+}
+
+function renderDrawer() {
+  const det = drawerData;
+  if (!det || !det.found) {
+    dbody.innerHTML = '<div class="dloading">' + esc((det && det.error) || "session not found") + "</div>";
+    return;
+  }
+  const t = det.totals, b = det.baseline, wt = det.window_totals;
+  el("dtitle").textContent = "TokenDog";
+  el("dscope").textContent = det.session.slice(0, 8) + " · " + (det.project || "?") + " · " + (det.headless ? "headless" : "interactive");
+
+  const tiles = [
+    ["Turns", t.turns.toLocaleString(), det.segments.length + " context(s)"],
+    ["Read Σ", fmt(t.input), "context summed over turns (≈ turns × ctx)"],
+    ["Output", fmt(t.output), "what came back"],
+    ["Peak", fmt(t.peak_context), "fullest single turn"],
+    ["Carried", fmt(t.carried), "cost of what entered"],
+  ].map(([k, v, n]) => '<div class="dtile"><div class="k">' + esc(k) + '</div><div class="v num">'
+    + esc(v) + '</div><div class="n">' + esc(n) + "</div></div>").join("");
+
+  const banner = det.window
+    ? '<div class="dbanner">Window: <b>' + esc(det.window) + "</b>"
+        + (wt ? " · <b>" + wt.turns.toLocaleString() + "</b> of " + t.turns.toLocaleString()
+                + " turns here · <b>" + fmt(wt.input) + "</b> carried"
+                + (wt.burn_per_min ? " · " + fmt(wt.burn_per_min) + "/min" : "") : "")
+        + ". Only turns inside the range are shown — switch below to see the whole session.</div>"
+    : "";
+
+  const floorRows = [];
+  if (b.tool_schemas) floorRows.push(["Tool schemas — all enabled connectors", b.tool_schemas]);
+  floorRows.push(["Skills, always-on", b.skills_always_on]);
+  floorRows.push(["Instruction files", b.instruction_files]);
+  floorRows.push(["Remainder — " + b.remainder_note, b.remainder]);
+  const floor = floorRows.map(([k, v]) => "<tr><td>" + esc(k) + '</td><td class="num">'
+    + v.toLocaleString() + "</td></tr>").join("")
+    + '<tr><td><b>First turn total</b></td><td class="num"><b>' + b.total.toLocaleString() + "</b></td></tr>";
+
+  dbody.innerHTML =
+    '<div class="dtiles">' + tiles + "</div>"
+    + banner
+    + "<h3>The floor — carried by every turn before anything is typed</h3>"
+    + '<div class="dwrapt"><table><tbody>' + floor + "</tbody></table></div>"
+    + '<div class="h3row"><h3>Turn by turn</h3><span class="sortby">sort:'
+      + '<button type="button" class="sortbtn" data-s="new">newest first</button>'
+      + '<button type="button" class="sortbtn" data-s="old">oldest first</button>'
+      + '<button type="button" class="sortbtn" data-s="costly">costliest</button>'
+      + "</span></div>"
+    + '<div id="showall"></div>'
+    + '<div class="dwrapt"><table><thead><tr><th>#</th><th>Time</th><th>Context</th>'
+      + "<th>Added</th><th>Re-read by</th><th>Carried</th><th></th><th>What arrived</th></tr></thead>"
+      + '<tbody id="dturns"></tbody></table></div>'
+    + (det.by_tool && det.by_tool.length
+        ? "<h3>By tool</h3><div class=\"dwrapt\"><table><thead><tr><th>Tool</th><th>Calls</th>"
+          + "<th>Result tokens</th><th>Carried</th></tr></thead><tbody>"
+          + det.by_tool.map(r => '<tr><td class="tnum">' + esc(r.tool) + '</td><td class="num">'
+              + r.calls.toLocaleString() + '</td><td class="num">' + r.tokens.toLocaleString()
+              + '</td><td class="num ' + (r.carried >= 1e6 ? "hot" : "") + '">' + fmt(r.carried)
+              + "</td></tr>").join("") + "</tbody></table></div>"
+        : "")
+    + '<div class="dfoot"><b>Carried</b> is an addition’s size times the turns that re-read it '
+      + "before the next reset — the model is stateless, so everything in the window is re-sent every "
+      + "turn. Figures are the runtime’s own per-turn usage; payload sizes are approximate.</div>";
+
+  drawDrawerTurns();
+  dbody.querySelectorAll(".sortbtn").forEach(btn =>
+    btn.addEventListener("click", () => { drawerSort = btn.dataset.s; drawDrawerTurns(); }));
+}
+
+let drawerShowAll = false;
+function drawDrawerTurns() {
+  const det = drawerData;
+  const windowed = !!det.window;
+  let rows = (det.turns || []).slice();
+  // Adhere to the range: when a window is selected, show only the turns inside
+  // it unless the reader asks for the whole session. The carry figures are
+  // still computed across the whole session — only the DISPLAY is scoped.
+  const total = rows.length;
+  if (windowed && !drawerShowAll) rows = rows.filter(x => x.in_window !== false);
+  const shown = rows.length;
+  if (drawerSort === "costly") rows.sort((a, b) => (b.carried || 0) - (a.carried || 0));
+  else if (drawerSort === "old") rows.sort((a, b) => a.index - b.index);
+  else rows.sort((a, b) => b.index - a.index);        // newest first (default)
+
+  const maxCarried = Math.max(1, ...rows.map(x => x.carried || 0));
+  el("dturns").innerHTML = rows.map(x => {
+    const what = (x.tools || []).map(tt =>
+      esc(tt.name) + (tt.detail ? " " + esc(tt.detail) : "")).join(" · ") || "—";
+    const w = Math.round((x.carried || 0) / maxCarried * 80);
+    return '<tr><td class="tnum">' + x.index + (x.reset_before ? " ⟲" : "") + "</td>"
+      + '<td class="tnum">' + esc(String(x.at).replace("T", " ").slice(5, 16)) + "</td>"
+      + '<td class="num">' + fmt(x.context) + "</td>"
+      + '<td class="num">' + (x.delta > 0 ? "+" + fmt(x.delta) : fmt(x.delta)) + "</td>"
+      + '<td class="num">' + (x.turns_after || 0).toLocaleString() + "</td>"
+      + '<td class="num ' + (x.carried >= 1e6 ? "hot" : x.carried >= 5e5 ? "warm" : "")
+        + '">' + fmt(x.carried) + "</td>"
+      + '<td><span class="dbar" style="width:' + w + 'px"></span></td>'
+      + "<td>" + what + "</td></tr>";
+  }).join("");
+
+  const sa = el("showall");
+  if (windowed && total > shown) {
+    sa.innerHTML = '<span class="snapshot">Showing ' + shown + " of " + total
+      + ' turns in the range. <a class="drill" id="toggleall" href="#">'
+      + (drawerShowAll ? "show only the range" : "show the whole session") + "</a></span>";
+  } else if (windowed && drawerShowAll) {
+    sa.innerHTML = '<span class="snapshot"><a class="drill" id="toggleall" href="#">show only the range</a></span>';
+  } else { sa.innerHTML = ""; }
+  const tgl = el("toggleall");
+  if (tgl) tgl.addEventListener("click", (e) => {
+    e.preventDefault(); drawerShowAll = !drawerShowAll; drawDrawerTurns(); });
+  // keep the sort buttons' pressed state in sync
+  dbody.querySelectorAll(".sortbtn").forEach(btn =>
+    btn.setAttribute("aria-current", btn.dataset.s === drawerSort ? "true" : "false"));
+}
+
+/* Row clicks open the drawer instead of navigating. The anchor keeps a real
+   href so middle-click / "open in new tab" and no-JS both still reach the page.
+   Re-run after every re-sort, since the rows are rebuilt. */
+function wireDrill(){
+  el("rows").querySelectorAll("a.drill").forEach(a =>
+    a.addEventListener("click", (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;  // let new-tab through
+      e.preventDefault(); drawerShowAll = false; openDrawer(a.dataset.transcript);
+    }));
+}
+el("dclose").addEventListener("click", closeDrawer);
+scrim.addEventListener("click", closeDrawer);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !drawer.hidden) closeDrawer();
+});
+
+/* ── findings ─────────────────────────────────────────────────────────── */
+const F = D.findings || [];
+const by = k => F.filter(f => f.kind === k);
+const resumes = by("limit-resume"), longs = by("long-lived"),
+      stale = by("stale-open"), cold = by("cold-start-dup");
+el("findings-lede").textContent = F.length
+  ? `Four patterns, ${F.length} occurrences. Each names the change that removes it.`
+  : "Nothing to act on in this window.";
+
+const cards = [];
+if (resumes.length) {
+  const sessions = new Set(resumes.map(r => r.session));
+  cards.push([resumes.length, "Resumed at the wall", `across ${sessions.size} session(s)`,
+    `A pause long enough to be a limit wait or a walk away, then the next turn carried on in an
+     already-large window instead of resetting.`,
+    "Treat a limit hit as a mandatory reset."]);
+}
+if (cold.length) {
+  const worstCold = cold.reduce((a, b) => b.input > a.input ? b : a);
+  cards.push([fmt(worstCold.input), "Cold-start duplication",
+    `${worstCold.runs} headless runs · ${worstCold.project}`,
+    `Each run starts empty and re-reads the same files from scratch. One discovery cost per run,
+     for what the previous run already had.`,
+    "Extract the shared excerpts once, pass them into every run."]);
+}
+if (longs.length) {
+  cards.push([longs.length, "Long-lived sessions",
+    longs.map(l => hrs(l.span_hours)).join(" · "),
+    `Age costs nothing on its own — but a session accumulates, and none of these was reset at a
+     threshold.`,
+    "End a session at its task boundary, not when it breaks."]);
+}
+if (stale.length) {
+  const w = stale.reduce((a, b) => b.last_context > a.last_context ? b : a);
+  cards.push([stale.length, "Still open and loaded", "interactive sessions only",
+    `<span class="mono">${esc(w.session)}</span> has sat idle ${hrs(w.idle_hours)} holding
+     <span class="hot">${fmt(w.last_context)}</span>. The next message into it costs that much
+     before it is finished being typed.`,
+    "Close these now."]);
+}
+el("findings").innerHTML = cards.map(([cnt, title, cost, body, fix]) => `
+  <div class="find">
+    <div class="top"><span class="cnt num">${esc(cnt)}</span><h4>${esc(title)}</h4></div>
+    <div class="cost">${esc(cost)}</div>
+    <p>${body}</p>
+    <div class="fix"><b>Fix:</b> ${esc(fix)}</div>
+  </div>`).join("");
+
+/* ── escalation ladder for the worst repeat offender ──────────────────── */
+if (resumes.length > 2) {
+  const tally = {};
+  resumes.forEach(r => (tally[r.session] = (tally[r.session] || 0) + 1));
+  const who = Object.keys(tally).reduce((a, b) => tally[b] > tally[a] ? b : a);
+  const mine = resumes.filter(r => r.session === who);
+  if (mine.length > 2) {
+    const cap = Math.max(...mine.map(r => r.context));
+    el("ladder-section").hidden = false;
+    el("ladder-lede").innerHTML = `Session <span class="mono">${esc(who)}</span> did this
+      ${mine.length} times. Read down the column: each resume began in a fuller window than the
+      one before.`;
+    el("ladder").innerHTML = mine.map((r, i) => `
+      <div class="rung${i === mine.length - 1 ? " last" : ""}"
+           data-tip="resumed at ${r.context.toLocaleString()} tokens after ${r.gap_minutes} min idle">
+        <span class="when num">${esc(String(r.at).replace("T", " ").slice(5, 16))}</span>
+        <span class="meter"><i style="width:${(r.context / cap * 100).toFixed(1)}%"></i></span>
+        <span class="amt num">${fmt(r.context)}</span>
+      </div>`).join("");
+  }
+}
+
+/* ── range selector: a real URL, so a view can be shared ─────────────── */
+/* Two kinds of range: calendar (today, yesterday — bounded by the reader's own
+   midnight) and rolling (7d and up). The labels come from the payload so the
+   page never has to know which is which. */
+/* The single range control: scope text + a dropdown that both SELECTS the range
+   and, with the dates beside it, DISPLAYS the selected window. Nothing else on
+   the page shows a date range. */
+const LABEL = D.range_labels || {};
+const ranges = D.ranges || ["today", "yesterday", "7d", "14d", "30d", "90d", "all"];
+el("scopetxt").textContent = D.project ? "project " + D.project : "all projects";
+el("rangesel").innerHTML = ranges.map(r =>
+  `<option value="${esc(r)}"${r === D.range ? " selected" : ""}>${esc(LABEL[r] || r)}</option>`
+).join("");
+el("rangesel").addEventListener("change", (e) => {
+  location.href = "?range=" + encodeURIComponent(e.target.value);   // full reload: rebuilds every tab for the range
+});
+/* From → to for the selected window, the one date range on the page. Times are
+   dropped for multi-day ranges (a 7d span does not need minutes); today/yesterday
+   keep the clock. */
+(() => {
+  const el2 = el("rangedates"); if (!el2) return;
+  if (!D.window_start) { el2.textContent = ""; return; }
+  const s = new Date(D.window_start), e = new Date(D.window_end || Date.now());
+  const sameDay = s.toDateString() === e.toDateString();
+  const d = dt => dt.toLocaleDateString([], {month:"short", day:"numeric"});
+  const t = dt => dt.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  el2.textContent = sameDay ? d(s) + " " + t(s) + "→" + t(e) : d(s) + " → " + d(e);
+})();
+
+/* ── deltas: a number with nothing to compare to says little ─────────── */
+function delta(pct, invert) {
+  if (pct === null || pct === undefined) return "";
+  const worse = invert ? pct < 0 : pct > 0;
+  const cls = Math.abs(pct) < 1 ? "flat" : worse ? "up" : "down";
+  const arrow = Math.abs(pct) < 1 ? "→" : pct > 0 ? "▲" : "▼";
+  return `<span class="delta ${cls}">${arrow} ${Math.abs(pct).toFixed(0)}%</span>`;
+}
+const C = D.change || {};
+if (C.input !== null && C.input !== undefined) {
+  const tiles = document.querySelectorAll("#tiles .tile .v");
+  if (tiles[0]) tiles[0].insertAdjacentHTML("beforeend", delta(C.input));
+  if (tiles[1]) tiles[1].insertAdjacentHTML("beforeend", delta(C.output, true));
+  const note = document.querySelector("#tiles .tile .n");
+  if (note) note.insertAdjacentHTML("beforeend",
+    ` · vs previous ${D.window_days}d`);
+}
+
+/* ── connectors ──────────────────────────────────────────────────────── */
+const S = D.surface || {};
+const conns = S.connectors || [];
+const SEV = { unused: "crit", low: "warn", used: "ok", nodata: "ser", off: "ok" };
+el("conn-rows").innerHTML = conns.length ? conns.map(c => {
+  const of = c.tools_known ? `${c.tools_called}/${c.tools_known}` : String(c.tools_called);
+  return `<tr class="${SEV[c.severity] || "ok"}">
+    <td class="sev mono">${esc(c.connector)}<div class="proj">${esc(c.source || "")}</div></td>
+    <td><span class="kindchip mono">${esc(c.scope)}</span></td>
+    <td class="num">${c.enabled ? "yes" : "no"}</td>
+    <td class="num">${of}</td>
+    <td class="num">${c.calls.toLocaleString()}</td>
+    <td class="num">${c.turns_resident.toLocaleString()}</td>
+    <td class="num">${c.calls_per_1k_turns === null ? "—" : c.calls_per_1k_turns}</td>
+    <td class="num">${c.schema_tokens ? fmt(c.schema_tokens) : "—"}</td>
+    <td class="num ${c.carried_tokens > 5e6 ? "hot" : ""}">${c.carried_tokens ? fmt(c.carried_tokens) : "—"}</td>
+    <td><span class="act ${SEV[c.severity] || "ok"}"><span class="dot"></span>${esc(c.action)}</span></td>
+  </tr>`;
+}).join("") : '<tr><td colspan="10"><span class="empty">No connectors found.</span></td></tr>';
+
+el("conn-note").innerHTML = (S.totals && S.totals.have_inventory)
+  ? `Schema sizes measured by <code>tokendog surface --refresh</code>. Carried = schema × turns resident.`
+  : `Schema sizes are unknown until <code>tokendog surface --refresh</code> is run, so those two
+     columns are blank rather than estimated. Usage and residency are exact.`;
+
+const bloated = conns.filter(c => c.calls && (c.tools_idle || []).length > 2);
+el("idle-block").innerHTML = bloated.length ? "<h3 style=\"font-size:13px;margin:22px 0 8px\">Idle tools inside used connectors</h3>"
+  + bloated.map(c => `<p class="idle"><b>${esc(c.connector)}</b> — ${c.tools_idle.length} of
+      ${c.tools_known} tools never called: ${c.tools_idle.slice(0, 8).map(t => `<code>${esc(t)}</code>`).join(", ")}${c.tools_idle.length > 8 ? ` +${c.tools_idle.length - 8} more` : ""}</p>`).join("")
+  : "";
+
+/* ── recommendations ─────────────────────────────────────────────────── */
+const R = D.recommendations || [];
+
+/* Where a command is typed. The glyph is a shorthand the reader already knows;
+   the words beside it are what actually carry the meaning. */
+const WHERE = {
+  terminal: { sigil: "$", where: "in a terminal" },
+  session:  { sigil: "/", where: "in the coding session" },
+  config:   { sigil: "\u2699", where: "edits your config" },
+};
+const URG = { now: "act now", soon: "soon", consider: "consider" };
+
+function recCard(r, i) {
+  const w = WHERE[r.command_kind] || WHERE.terminal;
+  const u = r.urgency || "soon";
+  return `<div class="rec ${esc(u)}">
+    <span class="n">${String(i + 1).padStart(2, "0")}</span>
+    <div>
+      <div class="head">
+        <span class="urg ${esc(u)}"><span class="dot"></span>${esc(URG[u] || u)}</span>
+        <h4>${esc(r.title)}</h4>
+      </div>
+      <p>${esc(r.why)}</p>
+      <span class="cmd ${esc(r.command_kind || "terminal")}"><span class="sigil">${w.sigil}</span
+        ><span class="text">${esc(r.command)}</span></span><span class="cmd-where">${w.where}</span>
+    </div>
+    <div class="right">
+      <div class="tok">${r.tokens === null || r.tokens === undefined ? "—" : fmt(r.tokens)}</div>
+      <div class="eff">${esc(r.effort)}</div>
+    </div>
+  </div>`;
+}
+
+const EMPTY = '<div class="rec consider"><span class="n">—</span><div>'
+  + '<h4>Nothing to act on</h4><p>No connector, session or run in this window '
+  + 'needs attention.</p></div><div></div></div>';
+
+el("recs").innerHTML = R.length ? R.map(recCard).join("") : EMPTY;
+
+/* The front page carries the ones worth doing today; the tab carries them all,
+   so the overview is a short list rather than a second copy of everything. */
+const top = R.filter(r => r.urgency === "now").slice(0, 5);
+if (top.length) {
+  el("actnow-section").hidden = false;
+  el("recs-top").innerHTML = top.map(recCard).join("");
+  const rest = R.length - top.length;
+  el("actnow-count").textContent = rest > 0
+    ? `${top.length} of ${R.length} — ${rest} more under Recommendations`
+    : `${top.length} item${top.length === 1 ? "" : "s"}`;
+}
+
+/* ── tabs ─────────────────────────────────────────────────────────────── */
+const unusedCount = conns.filter(c => c.severity === "unused" && c.enabled).length;
+const badge = n => n ? `<span class="badge">${n}</span>` : "";
+const PANES = [
+  ["overview", "Overview", ["pane-overview", "pane-overview-tail"]],
+  ["tools", "Connectors" + badge(unusedCount), ["pane-tools"]],
+  ["recs", "Recommendations" + badge(R.filter(r => r.urgency === "now").length),
+   ["pane-recs"]],
+  ["cost", "Cost", ["pane-cost"]],
+  ["pipelines", "Pipelines", ["pane-pipelines"]],
+  ["outcomes", "Outcomes", ["pane-outcomes"]],
+  ["errors", "Tool errors", ["pane-errors"]],
+  ["findings", "Findings", ["pane-findings"]],
+  ["detail", "Detail", ["pane-detail"]],
+];
+el("tabs").innerHTML = PANES.map(([id, label]) =>
+  `<button role="tab" data-pane="${id}" aria-selected="false">${label}</button>`).join("");
+
+function show(which) {
+  PANES.forEach(([id, , panes]) => {
+    panes.forEach(pid => { const n = el(pid); if (n) n.hidden = id !== which; });
+  });
+  document.querySelectorAll("#tabs button").forEach(b =>
+    b.setAttribute("aria-selected", String(b.dataset.pane === which)));
+  try { history.replaceState(null, "", `?days=${D.window_days}#${which}`); } catch (e) {}
+  if (which === "outcomes" && !outcomesLoaded) loadOutcomes();
+  if (which === "errors" && !errorsLoaded) loadErrors();
+  if (which === "cost" && !costLoaded) loadCost();
+  if (which === "pipelines" && !pipelinesLoaded) loadPipelines();
+}
+
+/* ── Glitch pipelines tab (lazy — reads .glitch/runs when opened) ─────── */
+let pipelinesLoaded = false;
+function loadPipelines() {
+  pipelinesLoaded = true;
+  el("plrows").innerHTML = '<tr><td colspan="7"><span class="empty">Reading Glitch run files…</span></td></tr>';
+  fetch("/pipelines.json?range=" + encodeURIComponent(D.range || ""), { cache: "no-store" })
+    .then(r => r.json()).then(renderPipelines)
+    .catch(err => { el("plrows").innerHTML = '<tr><td colspan="7"><span class="empty">could not load: '
+      + esc((err && err.message) || String(err)) + "</span></td></tr>"; });
+}
+function renderPipelines(o) {
+  const t = o.totals || {};
+  const sm = el("plsummary"); sm.hidden = false;
+  sm.innerHTML = (t.pipelines || 0) + " pipeline(s) · " + (t.runs || 0) + " run(s) · "
+    + (t.stages || 0) + " Claude stage(s) · <b>$" + (t.est_cost_usd || 0).toFixed(2)
+    + "</b> attributed · " + (t.matched_sessions || 0) + " sessions matched (exact)";
+  const rows = o.pipelines || [];
+  el("plrows").innerHTML = rows.length ? rows.map(g =>
+    "<tr><td class=\"mono\">" + esc(g.pipeline) + '</td><td class="num">' + g.runs
+    + '</td><td class="num">' + g.stages + '</td><td class="num">' + g.sessions
+    + '</td><td class="num">' + fmt(g.input) + '</td><td class="num ' + (g.est_cost_usd >= 100 ? "hot" : "")
+    + '">$' + (g.est_cost_usd || 0).toFixed(2) + '</td><td class="num" style="color:var(--ink-3)">$'
+    + (g.glitch_cost_usd || 0).toFixed(2) + "</td></tr>").join("")
+    : '<tr><td colspan="7"><span class="empty">No Glitch runs in this range. Needs <span class="mono">.glitch/runs/*.json</span> in a project with sessions here.</span></td></tr>';
+}
+
+/* ── cost tab (lazy — ingests + prices when opened) ───────────────────── */
+let costLoaded = false;
+function loadCost() {
+  costLoaded = true;
+  el("costmodel").innerHTML = '<tr><td colspan="7"><span class="empty">Pricing…</span></td></tr>';
+  fetch("/cost.json?range=" + encodeURIComponent(D.range || ""), { cache: "no-store" })
+    .then(r => r.json()).then(renderCost)
+    .catch(err => { el("costmodel").innerHTML = '<tr><td colspan="7"><span class="empty">could not load: '
+      + esc((err && err.message) || String(err)) + "</span></td></tr>"; });
+}
+function renderCost(o) {
+  const rows = o.by_model || [];
+  el("costmodel").innerHTML = rows.length ? rows.map(r =>
+    '<tr><td class="mono">' + esc(r.key) + '</td><td class="num">' + (r.calls || 0).toLocaleString()
+    + '</td><td class="num">' + fmt(r.cache_creation_tokens) + '</td><td class="num">' + fmt(r.cache_read_tokens)
+    + '</td><td class="num">' + fmt(r.output_tokens) + '</td><td class="num">' + fmt(r.input_tokens)
+    + '</td><td class="num">$' + (r.est_cost_usd || 0).toFixed(2) + "</td></tr>").join("")
+    : '<tr><td colspan="7"><span class="empty">No priced turns in this range.</span></td></tr>';
+  const tools = o.by_tool || [];
+  const total = tools.reduce((a, r) => a + (r.tool_payload_tokens || 0), 0) || 1;
+  el("costtool").innerHTML = tools.length ? tools
+    .sort((a, b) => b.tool_payload_tokens - a.tool_payload_tokens).map(r =>
+      '<tr><td class="mono">' + esc(r.key) + '</td><td class="num">' + (r.calls || 0).toLocaleString()
+      + '</td><td class="num">' + fmt(r.tool_payload_tokens) + " ("
+      + (r.tool_payload_tokens / total * 100).toFixed(1) + "%)</td></tr>").join("")
+    : '<tr><td colspan="3"><span class="empty">No tool payloads recorded (hooks cover sessions started after install).</span></td></tr>';
+}
+
+/* ── tool-errors tab (lazy — scans tool results when opened) ──────────── */
+let errorsLoaded = false;
+function loadErrors() {
+  errorsLoaded = true;
+  el("errows").innerHTML = '<tr><td colspan="6"><span class="empty">Scanning tool results…</span></td></tr>';
+  fetch("/errors.json?range=" + encodeURIComponent(D.range || ""), { cache: "no-store" })
+    .then(r => r.json()).then(renderErrors)
+    .catch(err => { el("errows").innerHTML = '<tr><td colspan="6"><span class="empty">could not load: '
+      + esc((err && err.message) || String(err)) + "</span></td></tr>"; });
+}
+function renderErrors(o) {
+  const t = o.totals || {};
+  const sm = el("ersummary"); sm.hidden = false;
+  const rate = t.calls ? (t.errors / t.calls * 100).toFixed(1) : "0";
+  sm.innerHTML = (t.calls || 0).toLocaleString() + " tool call(s) · <b>" + (t.errors || 0)
+    + "</b> failed (" + rate + "%) · " + (t.high_error_tools || 0) + " failing often";
+  const rows = (o.tools || []).filter(r => r.errors > 0);
+  el("errows").innerHTML = rows.length ? rows.map(r => {
+    const flag = r.high_error ? ' <span class="act crit" data-tip="5+ calls failing 20%+ — a pattern">⚠</span>' : "";
+    const ex = r.sample ? esc(r.sample.slice(0, 70)) : "";
+    return '<tr><td class="mono">' + esc(r.tool) + flag + '</td><td class="num">' + r.calls.toLocaleString()
+      + '</td><td class="num">' + r.errors + '</td><td class="num ' + (r.high_error ? "hot" : r.error_rate >= 10 ? "warm" : "")
+      + '">' + r.error_rate + '%</td><td>' + esc(r.dominant || "—") + '</td><td>' + ex + "</td></tr>";
+  }).join("")
+    : '<tr><td colspan="6"><span class="empty">No tool errors in this range — clean run.</span></td></tr>';
+}
+
+/* ── outcomes tab (lazy — runs git only when opened) ──────────────────── */
+let outcomesLoaded = false;
+function loadOutcomes() {
+  outcomesLoaded = true;
+  const gh = el("ocgh").checked ? "&gh=1" : "";
+  el("ocrows").innerHTML = '<tr><td colspan="6"><span class="empty">Computing outcomes'
+    + (el("ocgh").checked ? " (querying GitHub)" : " (running git)") + "…</span></td></tr>";
+  fetch("/outcomes.json?range=" + encodeURIComponent(D.range || "") + gh, { cache: "no-store" })
+    .then(r => r.json()).then(renderOutcomes)
+    .catch(err => { el("ocrows").innerHTML = '<tr><td colspan="6"><span class="empty">could not load: '
+      + esc((err && err.message) || String(err)) + "</span></td></tr>"; });
+}
+function renderOutcomes(o) {
+  const t = o.totals || {};
+  const sm = el("ocsummary"); sm.hidden = false;
+  const bits = [(t.prs || 0) + " PR(s)"];
+  if (t.cost_per_pr != null) bits.push("<b>$" + t.cost_per_pr.toFixed(2) + "</b> per merged PR");
+  bits.push("$" + (t.attributed_cost || 0).toFixed(2) + " attributed");
+  if (t.unmatched_sessions) bits.push(t.unmatched_sessions + " session(s) unlinked ($"
+    + (t.unmatched_cost || 0).toFixed(2) + ")");
+  const ex = t.exact_commits || 0, he = t.heuristic_commits || 0;
+  if (ex || he) bits.push("<b>" + ex + "</b> exact / " + he + " heuristic");
+  sm.innerHTML = bits.join(" · ");
+  const linkChip = m => {
+    const c = m === "exact" ? "ok" : m === "heuristic" ? "warn" : "ser";
+    const label = m === "exact" ? "exact" : m === "heuristic" ? "guess" : "mixed";
+    const tip = m === "exact" ? "the commit named this session (Claude-Session trailer)"
+      : m === "heuristic" ? "matched by time window + file overlap — not certain"
+      : "some commits stamped, some matched heuristically";
+    return '<span class="act ' + c + '" data-tip="' + tip + '"><span class="dot"></span>' + label + "</span>";
+  };
+  const groups = o.groups || [];
+  el("ocrows").innerHTML = groups.length ? groups.map(g => {
+    const name = g.pr != null ? "PR #" + g.pr : "(no PR)";
+    const subj = g.subject ? " " + esc(g.subject.slice(0, 56)) : "";
+    const cost = "$" + (g.est_cost_usd || 0).toFixed(2) + (g.shared ? "*" : "");
+    return "<tr><td>" + name + '<span style="color:var(--ink-3)">' + subj + "</span></td>"
+      + "<td>" + esc(g.repo || "—") + "</td><td>" + linkChip(g.method)
+      + '</td><td class="num">' + g.commit_count
+      + '</td><td class="num">' + g.session_count + '</td><td class="num">' + g.turns.toLocaleString()
+      + '</td><td class="num ' + (g.est_cost_usd >= 100 ? "hot" : "") + '">' + cost + "</td></tr>";
+  }).join("")
+    : '<tr><td colspan="7"><span class="empty">No outcomes linked in this range. Needs commits in '
+      + "the session's repo; try a wider range, or enable the GitHub CLI for squash-merge repos.</span></td></tr>";
+  const needHook = he && !ex;
+  el("ocnote").innerHTML = "Scoped to this machine, " + (o.own_author_only ? "this clone's git email"
+    : "all authors") + ". <b>*</b> = cost shared across sessions (may also appear under another PR). "
+    + (needHook ? "These links are <b>heuristic</b>. For <b>exact</b> attribution run <span class=\"mono\">"
+        + "tokendog install-hook</span> in the repo — commits then name their session outright."
+      : "<b>exact</b> = the commit carried a <span class=\"mono\">Claude-Session:</span> trailer; "
+        + "<b>guess</b> = matched by time + files.");
+}
+el("ocgh").addEventListener("change", () => { outcomesLoaded = false; loadOutcomes(); });
+el("tabs").addEventListener("click", e => {
+  const b = e.target.closest("button[data-pane]");
+  if (b) show(b.dataset.pane);
+});
+show((location.hash || "#overview").slice(1) || "overview");
+
+/* ── hover layer ──────────────────────────────────────────────────────── */
+const tip = el("tip");
+document.addEventListener("mousemove", e => {
+  const t = e.target.closest("[data-tip]");
+  if (!t) { tip.classList.remove("on"); return; }
+  tip.textContent = t.dataset.tip;
+  tip.classList.add("on");
+  const pad = 14;
+  tip.style.left = Math.min(e.clientX + pad, innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = Math.max(e.clientY - tip.offsetHeight - pad, 8) + "px";
+});
+document.addEventListener("mouseleave", () => tip.classList.remove("on"));
+
+/* ── refresh: an explicit re-ingest, because it walks the whole tree ──── */
+el("refresh").addEventListener("click", async ev => {
+  const b = ev.currentTarget;
+  b.setAttribute("aria-busy", "true");
+  b.textContent = "Reading…";
+  try {
+    await fetch("/data.json?refresh=1", { cache: "no-store" });
+    location.reload();
+  } catch (err) {
+    b.removeAttribute("aria-busy");
+    b.textContent = "Refresh failed";
+  }
+});
+}
+
+function boot() {
+  try {
+    render();
+  } catch (err) {
+    // Say so on the page rather than in a console nobody has open.
+    const box = document.getElementById("verdict");
+    if (box) box.textContent = "Could not render: " + ((err && err.message) || err);
+    if (window.console) console.error("tokendog ledger:", err);
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", boot, { once: true });
+} else {
+  boot();
+}
+</script>
+
+<div id="scrim" class="scrim" hidden></div>
+<aside id="drawer" class="drawer" hidden aria-label="session detail" role="dialog" aria-modal="true">
+  <div class="dhead">
+    <h2><span class="mark">&#128021;</span><span id="dtitle">TokenDog</span></h2>
+    <span class="dscope" id="dscope"></span>
+    <span class="dright">
+      <a id="djson" class="asjson" href="#" target="_blank" rel="noopener">json</a>
+      <button type="button" class="dclose" id="dclose" aria-label="close">&times;</button>
+    </span>
+  </div>
+  <div class="dbody" id="dbody"></div>
+</aside>
+</body>
+</html>

@@ -69,6 +69,19 @@ class TokenEvent:
     # Basename of the transcript's `cwd`, e.g. "contextflow". Basename only:
     # a full path leaks the home directory, and often a client name with it.
     project: str | None = None
+    # Tool names invoked by THIS response, in the order they appear. A response
+    # can call several tools, and its blocks are spread across several records,
+    # so the reader unions them while it holds the response. Empty for a
+    # response that called nothing. This is the only place a transcript says
+    # WHICH tool ran — `tool` below is set by hooks, which cover only sessions
+    # started after the plugin was installed.
+    tools: list[str] | None = None
+    # How the session was started: "cli" for an interactive one, an sdk value
+    # for a non-interactive/print-mode run. Carried because a headless run and
+    # an interactive session need OPPOSITE advice — an exited run holds no
+    # window, so telling someone to reset it is noise — and nothing else in the
+    # event distinguishes them.
+    entrypoint: str | None = None
 
     def __post_init__(self) -> None:
         if self.source == SOURCE_TRANSCRIPT:
@@ -85,6 +98,16 @@ class TokenEvent:
     def is_turn(self) -> bool:
         """A metered turn with a context window of its own."""
         return self.band is not None
+
+    @property
+    def is_headless(self) -> bool:
+        """True for a non-interactive run (print mode / the SDK).
+
+        Unknown entrypoints read as interactive: the conservative direction,
+        since the advice for an interactive session (reset it) is harmless
+        against a run that has already exited, while the reverse is not.
+        """
+        return bool(self.entrypoint) and self.entrypoint != "cli"
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), separators=(",", ":"), sort_keys=True)

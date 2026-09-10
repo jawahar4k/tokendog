@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import json
 import os
 from .backend import LocalSQLiteBackend, QueryFilter
 from .ingest import ingest_sink, ingest_glitch_firmware, ingest_transcripts
@@ -215,15 +216,17 @@ def format_savings(s: dict) -> str:
     return "\n".join(lines)
 
 
-def band_report_data(transcript_root=None, project=None) -> dict:
+def band_report_data(transcript_root=None, project=None, *, window=None) -> dict:
     from itertools import chain
     from .bands import band_summary
     from .transcripts import read_transcripts
+    from .window import scoped
     events = chain(read_transcripts(transcript_root), read_events())
     if project:
         events = (e for e in events if e.project == project)
-    data = band_summary(events)
+    data = band_summary(scoped(events, window))
     data["project"] = project
+    data["window"] = window.label if window is not None else None
     return data
 
 
@@ -235,10 +238,15 @@ def format_bands(s: dict) -> str:
     act on, because everything in a context is re-read on every later turn.
     """
     scope = f" — project `{s['project']}`" if s.get("project") else ""
-    lines = [f"### TokenDog context bands{scope}", ""]
+    lines = [f"### TokenDog context bands{scope}", ""] + _window_lines(s)
     if not s["turns"]:
-        lines.append("_No metered turns found. Context bands are read from Claude Code "
-                     "transcripts — run `tokendog doctor` to check they were located._")
+        # An empty windowed report is an answer, not a fault. Sending the reader
+        # to `doctor` because nothing happened in the sixteen minutes they asked
+        # about would have them debug a working install.
+        lines.append(f"_No metered turns in this window ({s['window']})._" if s.get("window")
+                     else "_No metered turns found. Context bands are read from Claude "
+                          "Code transcripts — run `tokendog doctor` to check they were "
+                          "located._")
         return "\n".join(lines)
 
     lines.append(f"{s['turns']:,} turns · {s['total_context_tokens']:,} context tokens")
@@ -261,6 +269,603 @@ def format_bands(s: dict) -> str:
     lines.append("")
     lines.append("_Context = cache read + cache write + fresh input, per metered turn. "
                  "Output is excluded: it came back, it was not carried._")
+    return "\n".join(lines)
+
+
+def format_resumes(s: dict) -> str:
+    """Show where a large window was carried past the moment to reset it.
+
+    Bands say a turn was expensive. This says a turn was expensive AND
+    avoidable: the session had already stopped, and starting again in the same
+    window is what made every turn after it cost what it did.
+    """
+    scope = f" — project `{s['project']}`" if s.get("project") else ""
+    t = s["totals"]
+    th = s["thresholds"]
+    lines = [f"### TokenDog resumes at the wall{scope}", ""] + _window_lines(s)
+    if not t["count"]:
+        lines.append(f"_No resume found: no turn at or above {th['min_context']:,} tokens "
+                     f"of context followed a pause of {th['gap_minutes']:.0f}+ minutes. "
+                     "This is the result you want._")
+        return "\n".join(lines)
+
+    lines.append(f"{t['count']:,} resume(s) across {t['sessions']} session(s) · "
+                 f"{t['carried_tokens']:,} tokens carried past a reset")
+    lines.append("")
+    lines.append("| Session | Project | Resumes | Escalating | First → last context | Carried |")
+    lines.append("|---|---|--:|:-:|--:|--:|")
+    for r in s["sessions"]:
+        arrow = f"{r['first_context']:,} → {r['last_context']:,}"
+        lines.append(f"| `{r['session'][:8]}` | {r['project'] or '—'} | {r['count']} | "
+                     f"{'yes' if r['escalating'] else 'no'} | {arrow} | "
+                     f"{r['carried_tokens']:,} |")
+
+    worst = s["sessions"][0]
+    lines.append("")
+    if worst["escalating"]:
+        lines.append(f"**`{worst['session'][:8]}` escalated**: its resumes ended higher than "
+                     f"they started, {worst['first_context']:,} → {worst['last_context']:,}. "
+                     "Not resetting is what raised the floor for the next one.")
+    if t["never_reset"]:
+        lines.append(f"{t['never_reset']:,} of {t['count']:,} resume(s) were never followed by "
+                     "a reset — those windows were carried to the end of the session.")
+
+    lines.append("")
+    lines.append(f"_A resume is a pause of {th['gap_minutes']:.0f}+ minutes followed by a turn "
+                 f"carrying {th['min_context']:,}+ tokens. The transcript records no reason for a "
+                 "pause, so this names the shape, not the cause._")
+    lines.append("")
+    lines.append("_`Carried` is occupancy at the resume times the turns that then ran before the "
+                 "next decision point — the next reset or the next resume, whichever came first. "
+                 "Segments therefore never overlap, so each turn is charged to exactly one resume. "
+                 "It is what resetting at that moment could **at most** have avoided: a real reset "
+                 "re-reads some of the same material, so treat it as a ceiling, not a saving._")
+    return "\n".join(lines)
+
+
+def format_cold_start(s: dict) -> str:
+    """Show discovery paid for more than once.
+
+    Bands and resumes both look at one session carrying too much. This looks
+    across sessions that each carry too little, repeatedly: a headless run
+    starts empty every time, so running it eleven times over one repository
+    pays to learn that repository eleven times.
+    """
+    scope = f" — project `{s['project']}`" if s.get("project") else ""
+    t = s["totals"]
+    th = s["thresholds"]
+    lines = [f"### TokenDog cold-start duplication{scope}", ""] + _window_lines(s)
+    if not t["projects"]:
+        seen = t["headless_runs_seen"]
+        lines.append(f"_No repeated discovery found across {seen:,} non-interactive run(s). "
+                     f"A project needs {th['min_runs']}+ runs sharing it before duplication "
+                     "is possible._")
+        return "\n".join(lines)
+
+    lines.append(f"{t['runs']:,} non-interactive run(s) across {t['projects']} project(s) · "
+                 f"{t['duplicated_tokens']:,} tokens of repeated discovery")
+    lines.append("")
+    lines.append("| Project | Runs | Ramp turns (mean) | Total ramp | Duplicated | Shared files |")
+    lines.append("|---|--:|--:|--:|--:|--:|")
+    for g in s["groups"]:
+        shared = f"{g['shared_file_count']}" if g["shared_file_count"] else "—"
+        lines.append(f"| {g['project']} | {g['runs']} | {g['mean_ramp_turns']} | "
+                     f"{g['ramp_tokens']:,} | {g['duplicated_tokens']:,} | {shared} |")
+
+    worst = s["groups"][0]
+    lines.append("")
+    lines.append(f"**{worst['project']}**: {worst['runs']} runs each climbed roughly "
+                 f"{worst['mean_ramp_turns']} turns to get up to speed. One of them had to; "
+                 f"the other {worst['runs'] - 1} were re-reading what the first already knew.")
+    if worst["shared_files"]:
+        names = ", ".join(f"`{f['file']}` ({f['runs']} runs)"
+                          for f in worst["shared_files"][:5])
+        lines.append("")
+        lines.append(f"Files more than one run touched: {names}.")
+    else:
+        lines.append("")
+        lines.append("_No hook telemetry for these runs, so the shared reads are inferred from "
+                     "the ramp rather than observed. Install the plugin to name the files._")
+
+    lines.append("")
+    lines.append(f"_A run's ramp is the turns before occupancy first reached "
+                 f"{th['ramp_peak_share']:.0%} of that run's own peak — the climb to get up to "
+                 "speed. `Duplicated` is the group's whole ramp minus its cheapest single ramp: "
+                 "one run genuinely had to discover, so only the rest are counted._")
+    lines.append("")
+    lines.append("_Fix: extract what the runs share once and pass it into each run's prompt, "
+                 "rather than letting every run rediscover it._")
+    return "\n".join(lines)
+
+
+def _label(transcript: str) -> str:
+    """A short transcript id that stays unique.
+
+    Eight characters is plenty for a session uuid and useless for a subagent:
+    the `agent-` prefix eats six of them, leaving two hex digits, and a single
+    fan-out produces dozens. Measured on one machine, every 8-char subagent
+    label collided — sixteen labels covering 376 transcripts, 18 to 35 rows
+    each, all rendered as the same handful of names. So the prefix is kept and
+    eight characters are taken from what follows it.
+    """
+    if transcript.startswith("agent-"):
+        return "agent-" + transcript[len("agent-"):][:8]
+    return transcript[:8]
+
+
+def _window_lines(s: dict) -> list[str]:
+    """The window a report was scoped to, named in the reader's own local time.
+
+    Printed rather than assumed: a table of figures with no stated range is
+    read as all-time, and a reader who scoped a report and forgot will
+    misattribute every number in it.
+    """
+    win = s.get("window")
+    return [f"**Window:** {win}", ""] if win else []
+
+
+def _tok(n) -> str:
+    """A token count at reading size: 13.2M, 610K, 27,431."""
+    if n is None:
+        return "—"
+    n = int(n)
+    if abs(n) >= 1_000_000:
+        return f"{n/1_000_000:.2f}M"
+    if abs(n) >= 10_000:
+        return f"{n/1_000:.0f}K"
+    return f"{n:,}"
+
+
+def _rate(per_min) -> str:
+    """Tokens per minute, the figure that separates a runaway from a grinder."""
+    if per_min is None:
+        return "—"
+    if per_min >= 1_000_000:
+        return f"{per_min/1_000_000:.2f}M/m"
+    if per_min >= 1_000:
+        return f"{per_min/1_000:.0f}K/m"
+    return f"{per_min:.0f}/m"
+
+
+def _hrs(h) -> str:
+    return f"{h/24:.0f}d" if h >= 24 else f"{h:.1f}h"
+
+
+def format_errors(d: dict) -> str:
+    """Which tools fail, how often, and how — so a costly retry loop is visible.
+
+    A failing tool bills twice (the failure, then the bigger-context retry).
+    Categories are matched by pattern, not read by a model, so this is free.
+    """
+    scope = f" — project `{d['project']}`" if d.get("project") else ""
+    t = d["totals"]
+    lines = [f"### TokenDog tool errors{scope}", ""] + _window_lines(d)
+    if not t["calls"]:
+        lines.append("_No tool results found. Errors are read from transcripts — a tool_result "
+                     "carries success/failure, matched to the tool_use that named the tool._")
+        return "\n".join(lines)
+    rate = round(t["errors"] / t["calls"] * 100, 1) if t["calls"] else 0.0
+    lines.append(f"{t['calls']:,} tool call(s) · {t['errors']:,} failed ({rate}%) · "
+                 f"{t['high_error_tools']} tool(s) failing often")
+    lines.append("")
+    lines.append("| Tool | Calls | Errors | Rate | Mostly | Example |")
+    lines.append("|---|--:|--:|--:|---|---|")
+    for r in d["tools"]:
+        if not r["errors"]:
+            continue
+        flag = " ⚠" if r["high_error"] else ""
+        ex = (r["sample"][:60] + "…") if r["sample"] and len(r["sample"]) > 61 else (r["sample"] or "")
+        lines.append(f"| `{r['tool']}`{flag} | {r['calls']:,} | {r['errors']:,} | "
+                     f"{r['error_rate']}% | {r['dominant'] or '—'} | {ex} |")
+    lines.append("")
+    lines.append("_⚠ marks a tool with 5+ calls failing 20%+ of the time — a pattern, not a one-off. "
+                 "Categories (timeout / not-found / permission / network / rate-limit / syntax / "
+                 "interrupted / nonzero-exit / other) are matched by pattern, not read by a model._")
+    return "\n".join(lines)
+
+
+def format_pipelines(d: dict) -> str:
+    """Claude spend attributed to Glitch pipelines, via the run-state files.
+
+    The link is exact: Glitch stamps each stage's `--session-id`, which is the
+    transcript name tokendog costs by — no heuristic. `Glitch $` is Glitch's own
+    per-stage figure, shown beside tokendog's for a sanity check.
+    """
+    scope = f" — project `{d['project']}`" if d.get("project") else ""
+    t = d["totals"]
+    lines = [f"### TokenDog Glitch pipelines{scope}", ""] + _window_lines(d)
+    if not d["pipelines"]:
+        lines.append("_No Glitch runs found. This reads `<project>/.glitch/runs/*.json`; a project "
+                     "with pipeline runs and Claude sessions in range will show here._"
+                     if t["run_dirs"] else
+                     "_No `.glitch/runs` directories under the projects that have sessions._")
+        return "\n".join(lines)
+    lines.append(f"{t['pipelines']} pipeline(s) · {t['runs']} run(s) · {t['stages']} Claude stage(s) · "
+                 f"${t['est_cost_usd']:.2f} attributed · {t['matched_sessions']} session(s) matched")
+    lines.append("")
+    lines.append("| Pipeline | Runs | Stages | Sessions | Input | Est $ | Glitch $ |")
+    lines.append("|---|--:|--:|--:|--:|--:|--:|")
+    for g in d["pipelines"]:
+        lines.append(f"| {g['pipeline']} | {g['runs']} | {g['stages']} | {g['sessions']} | "
+                     f"{_tok(g['input'])} | ${g['est_cost_usd']:.2f} | ${g['glitch_cost_usd']:.2f} |")
+    lines.append("")
+    lines.append("_Exact attribution: each stage's Claude `--session-id` (from the run-state file) is "
+                 "the transcript tokendog priced. `Est $` is tokendog's list-price weight; `Glitch $` is "
+                 "Glitch's own per-stage figure. " + BILLING_NOTE + "_")
+    return "\n".join(lines)
+
+
+def format_outcomes(d: dict) -> str:
+    """Cost per merged PR, and what fed it — the ROI view.
+
+    A heuristic join, and it says so: a session is linked to a commit that lands
+    in its window in the same repo with overlapping files, and a commit to a PR
+    by its merge subject. The cost per PR is the sum of the sessions that
+    plausibly fed it; where a PR drew on several sessions the cost is shared, not
+    split, because a finer apportionment would be invented.
+    """
+    scope = f" — project `{d['project']}`" if d.get("project") else ""
+    t = d["totals"]
+    lines = [f"### TokenDog outcomes{scope}", ""] + _window_lines(d)
+    if not d["groups"]:
+        lines.append("_No outcomes linked. This needs git: sessions are matched to commits in "
+                     "their own repo, so it runs where the work landed, and a repo with no commits "
+                     "in the window has nothing to attribute._")
+        return "\n".join(lines)
+    head = [f"{t['prs']:,} PR(s)"]
+    if t["cost_per_pr"] is not None:
+        head.append(f"${t['cost_per_pr']:.2f} per merged PR")
+    head.append(f"${t['attributed_cost']:.2f} attributed")
+    if t["unmatched_sessions"]:
+        head.append(f"{t['unmatched_sessions']:,} session(s) unlinked (${t['unmatched_cost']:.2f})")
+    ex, he = t.get("exact_commits", 0), t.get("heuristic_commits", 0)
+    if ex or he:
+        head.append(f"{ex} exact / {he} heuristic commit link(s)")
+    lines.append(" · ".join(head))
+    lines.append("")
+    lines.append("| Outcome | Repo | Link | Commits | Sessions | Turns | Est $ |")
+    lines.append("|---|---|---|--:|--:|--:|--:|")
+    for g in d["groups"]:
+        name = f"PR #{g['pr']}" if g["pr"] is not None else "_(no PR)_"
+        subj = (g["subject"][:44] + "…") if len(g["subject"]) > 45 else g["subject"]
+        label = f"{name} {subj}".strip()
+        cost = f"${g['est_cost_usd']:.2f}" + ("*" if g["shared"] else "")
+        mark = {"exact": "exact", "heuristic": "guess", "mixed": "mixed"}.get(g.get("method"), "—")
+        lines.append(f"| {label} | {g['repo'] or '—'} | {mark} | {g['commit_count']} | "
+                     f"{g['session_count']} | {g['turns']:,} | {cost} |")
+    lines.append("")
+    lines.append("")
+    if he and not ex:
+        lines.append("_These links are HEURISTIC (in-window + file overlap). For EXACT links, run "
+                     "`tokendog install-hook` in the repo — commits then name their session outright._")
+        lines.append("")
+    lines.append("_Attribution is scoped to THIS machine's sessions and "
+                 + ("this clone's git email" if d.get("own_author_only") else "all commit authors")
+                 + ". It cannot see AI sessions run on other laptops, so a PR co-authored across "
+                 + "machines shows only the share done here. For attribution that is exact rather "
+                 + "than heuristic — and that aggregates across machines — stamp the session id into "
+                 + "the commit (a `Claude-Session:` trailer); ask to enable that._")
+    lines.append("")
+    lines.append(f"_Cost per PR is the sum of the sessions that plausibly fed it. `*` marks a PR "
+                 f"whose cost is SHARED across several sessions — the same dollars may appear under "
+                 f"another PR those sessions also touched, so the per-PR figures do not sum to the "
+                 f"total. Linkage is heuristic: in-window, same repo, overlapping files, PR number "
+                 f"from the merge subject (grace {d['grace_minutes']:.0f}m). "
+                 + BILLING_NOTE + "_")
+    return "\n".join(lines)
+
+
+def _hygiene_weight_block(s: dict) -> list[str]:
+    """The same tokens again, split by what they actually cost.
+
+    `Input` treats every token as one token. The bill does not: a cache read is
+    a tenth of fresh input, a 5-minute cache write is 1.25x, a 1-hour write is
+    2x. So two sessions carrying an identical total can differ twentyfold, and
+    the column that says which is which is the one a reader chasing a limit
+    needs. The split is only ever shown for the sessions where it changes the
+    ranking — a table of five extra columns for every row would bury it.
+    """
+    rows = [r for r in s["sessions"] if r.get("weighted_input")]
+    if not rows:
+        return []
+    rows = sorted(rows, key=lambda r: -r["weighted_input"])[:8]
+    t = s["totals"]
+    b = t.get("buckets") or {}
+    out = ["", "**Where the weight is** — the same tokens at their billing rates.", "",
+           "| Session | Carried | Weighted | Cache read | 5m write | 1h write | Fresh |",
+           "|---|--:|--:|--:|--:|--:|--:|"]
+    for r in rows:
+        rb = r.get("buckets") or {}
+        out.append(
+            f"| `{_label(r['transcript'])}` | {_tok(r['input'])} | "
+            f"{_tok(r['weighted_input'])} | {_tok(rb.get('cache_read'))} | "
+            f"{_tok((rb.get('write_5m') or 0) + (rb.get('write_other') or 0))} | "
+            f"{_tok(rb.get('write_1h'))} | {_tok(rb.get('fresh'))} |")
+    out.append(f"| **all** | **{_tok(t.get('input'))}** | "
+               f"**{_tok(t.get('weighted_input'))}** | {_tok(b.get('cache_read'))} | "
+               f"{_tok((b.get('write_5m') or 0) + (b.get('write_other') or 0))} | "
+               f"{_tok(b.get('write_1h'))} | {_tok(b.get('fresh'))} |")
+
+    hour = b.get("write_1h") or 0
+    weighted = t.get("weighted_input") or 0
+    if hour and weighted:
+        share = hour * 2.0 / weighted * 100
+        out += ["", f"_1-hour cache writes are {_tok(hour)} of the carried tokens but "
+                    f"{share:.0f}% of the weight, because they bill at 2x. They buy latency "
+                    "on a session whose turns are minutes apart; on a session that is simply "
+                    "large they double the price of being large._"]
+    return out
+
+
+def format_hygiene(s: dict) -> str:
+    """Show which sessions were managed and what not managing them cost.
+
+    Bands size the windows; this asks whether anyone ever reset them. `Excess`
+    is the only avoidable figure in the tool that needs no counterfactual: it
+    counts tokens carried ABOVE a line the session could have held, so it never
+    guesses what a reset would have re-read.
+    """
+    scope = f" — project `{s['project']}`" if s.get("project") else ""
+    t = s["totals"]
+    th = s["thresholds"]
+    win = s.get("window")
+    lines = [f"### TokenDog session hygiene{scope}", ""]
+    if win:
+        lines += [f"**Window:** {win}", ""]
+    if not t["sessions"]:
+        lines.append("_No sessions found." if not win else
+                     f"_No turns in this window ({win})._")
+        if not win:
+            lines.append("Hygiene is read from transcripts — run "
+                         "`tokendog doctor` to check they were located._")
+        return "\n".join(lines)
+
+    head = [f"{t['sessions']:,} session(s)"]
+    if s.get("turns"):
+        head.append(f"{s['turns']:,} turns")
+    head.append(f"{_tok(t.get('input'))} carried, {_tok(t.get('weighted_input'))} weighted")
+    span = s.get("window_minutes")
+    if span:
+        # The rate over the WHOLE window, not the busiest session in it: this is
+        # the figure that answers "how long until the limit goes again".
+        head.append(f"{_rate((t.get('input') or 0) / span)} across the window")
+    else:
+        head.append(f"{t['needing_action']:,} needing action")
+    head.append(f"{t['excess_tokens']:,} above {th['occupancy_warn']:,}")
+    lines.append(" · ".join(head))
+    lines.append("")
+    lines.append("| Session | Project | Kind | Turns | Avg ctx | Peak | Burn | Subs | "
+                 "Open for | Idle | Resets | Excess | Do this |")
+    lines.append("|---|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|")
+    for r in s["sessions"][:15]:
+        # All-time, the table drops the healthy rows: it exists to name what to
+        # act on, and a hundred well-behaved sessions bury the two that matter.
+        # Inside a named window the question is the other one — what was spent
+        # between these two times — and dropping a session that spent tokens
+        # would leave a table that disagrees with its own header.
+        if not win and r["excess_tokens"] <= 0 and r["severity"] == "ok":
+            continue
+        subs = (f"{r.get('subagents') or 0}"
+                + (f" ({_tok(r['subagent_input'])})" if r.get("subagents") else ""))
+        lines.append(
+            f"| `{_label(r['transcript'])}` | {r['project'] or '—'} | "
+            f"{r['kind']} | {r['turns']:,} | "
+            f"{r['avg_context']:,} | {r['peak_context']:,} | "
+            f"{_rate(r.get('burn_per_min'))} | {subs} | {_hrs(r['span_hours'])} | "
+            f"{_hrs(r['idle_hours'])} | {r['resets']} | {r['excess_tokens']:,} | "
+            f"{r['action']} |")
+
+    lines += _hygiene_weight_block(s)
+
+    if t["never_reset"]:
+        lines.append("")
+        lines.append(f"{t['never_reset']:,} of {t['sessions']:,} session(s) were never reset "
+                     "once. A session that grew large and reset repeatedly was busy; one that "
+                     "grew large and never reset was unmanaged.")
+
+    drift = [f for f in s["findings"] if f["kind"] == "unmanaged-drift"]
+    if drift:
+        worst = max(drift, key=lambda f: f["excess_tokens"])
+        lines.append("")
+        lines.append(f"**Worst drift**: `{worst['session']}` climbed "
+                     f"{worst['first_context']:,} → {worst['peak_context']:,} without a single "
+                     f"reset, carrying {worst['excess_tokens']:,} tokens above the threshold.")
+
+    lines.append("")
+    lines.append(f"_`Excess` is the tokens a session carried ABOVE {th['occupancy_warn']:,}, "
+                 "summed over its turns: had it been reset at that line, each of those turns "
+                 "would have carried at most the line. Unlike a savings estimate this needs no "
+                 "counterfactual — it only counts what was carried over a threshold the session "
+                 "could have held._")
+    lines.append("")
+    lines.append(f"_Age and idleness are not applied to headless runs: an exited run holds no "
+                 f"window, so there is nothing to close. Long-lived is {th['age_long_lived_hours']:.0f}h+, "
+                 f"stale is {th['idle_stale_hours']:.0f}h+ idle still holding "
+                 f"{th['stale_min_context']:,}+._")
+    return "\n".join(lines)
+
+
+def format_surface(s: dict) -> str:
+    """Show what is in the window before the conversation starts.
+
+    Grouped by CONNECTOR, because that is the unit you can switch off: a server
+    contributes all of its tools or none. Tools sit underneath, so a connector
+    with forty unused tools reads as one line rather than forty.
+    """
+    scope = f" — project `{s['project']}`" if s.get("project") else ""
+    t = s["totals"]
+    th = s["thresholds"]
+    lines = [f"### TokenDog context surface{scope}", ""] + _window_lines(s)
+    lines.append(f"{t['connectors']} connector(s) · {t['unused']} never called · "
+                 f"{t['low_use']} rarely called · measured over {t['turns']:,} turns "
+                 f"in {t['projects']} project(s)")
+    lines.append("")
+
+    if not t["have_inventory"]:
+        lines.append("_No tool inventory captured, so schema sizes are unknown and the token "
+                     "columns are blank. Usage and residency below are exact; run "
+                     "`tokendog surface --refresh` to add sizes._")
+        lines.append("")
+
+    lines.append("| Connector | Scope | On | Tools used/ships | Calls | Turns resident | "
+                 "Calls/1k turns | Schema | Carried | Verdict |")
+    lines.append("|---|---|:-:|--:|--:|--:|--:|--:|--:|---|")
+    for c in s["connectors"]:
+        sch = f"{c['schema_tokens']:,}" if c["schema_tokens"] else "—"
+        car = f"{c['carried_tokens']:,}" if c["carried_tokens"] else "—"
+        per = f"{c['calls_per_1k_turns']}" if c["calls_per_1k_turns"] is not None else "—"
+        of = f"{c['tools_called']}/{c['tools_known']}" if c["tools_known"] else str(c["tools_called"])
+        lines.append(f"| `{c['connector']}` | {c['scope']} | {'yes' if c['enabled'] else 'no'} | "
+                     f"{of} | {c['calls']:,} | {c['turns_resident']:,} | {per} | "
+                     f"{sch} | {car} | {c['action']} |")
+
+    unused = [c for c in s["connectors"] if c["severity"] == "unused" and c["enabled"]]
+    if unused:
+        lines.append("")
+        lines.append("**Disable candidates** — enabled, resident on every turn, never called once:")
+        for c in unused:
+            where = "everywhere" if c["scope"] == "global" else ", ".join(c["projects"]) or c["scope"]
+            carried = (f", carrying {c['carried_tokens']:,} tokens"
+                       if c["carried_tokens"] else "")
+            note = ""
+            if c["schema_tokens"] is None and c.get("probeable"):
+                note = " — and it could not be started when probed, so it is pure cost"
+            lines.append(f"- `{c['connector']}` — enabled {where}, resident for "
+                         f"{c['turns_resident']:,} turns{carried}{note}")
+
+    bloated = [c for c in s["connectors"]
+               if c["calls"] and c.get("tools_idle") and len(c["tools_idle"]) > 2]
+    if bloated:
+        lines.append("")
+        lines.append("**Used, but carrying idle tools** — every tool a connector ships is "
+                     "resident whether or not it is called:")
+        for c in bloated:
+            idle = c["tools_idle"]
+            shown = ", ".join(f"`{t}`" for t in idle[:6])
+            more = f" (+{len(idle) - 6} more)" if len(idle) > 6 else ""
+            lines.append(f"- `{c['connector']}` — {len(idle)} of {c['tools_known']} tools "
+                         f"never called: {shown}{more}")
+
+    used = [c for c in s["connectors"] if c["calls"]]
+    if used:
+        lines.append("")
+        lines.append("**Tools actually called**, by connector:")
+        for c in used:
+            tools = ", ".join(f"`{x['tool']}` ×{x['calls']:,}" for x in c["tools"][:8])
+            more = f" (+{len(c['tools']) - 8} more)" if len(c["tools"]) > 8 else ""
+            lines.append(f"- `{c['connector']}`: {tools}{more}")
+
+    loc = s["local"]
+    if loc["skills"] or loc["instructions"] or loc["commands"]:
+        lines.append("")
+        lines.append(f"**Always-on local surface** — {t['always_on_local_tokens']:,} tokens in "
+                     "every prompt:")
+        for i in loc["instructions"]:
+            lines.append(f"- `{i['name']}` — {i['tokens']:,} tokens")
+        for sk in sorted(loc["skills"], key=lambda r: -r["always_on_tokens"]):
+            lines.append(f"- skill `{sk['name']}` — {sk['always_on_tokens']:,} always-on, "
+                         f"{sk['on_demand_tokens']:,} more when invoked")
+        if loc["commands"]:
+            tot = sum(c["tokens"] for c in loc["commands"])
+            lines.append(f"- {len(loc['commands'])} plugin command(s) — {tot:,} tokens on demand")
+
+    if s["builtin_tools"]:
+        top = ", ".join(f"`{b['tool']}` ×{b['calls']:,}" for b in s["builtin_tools"][:6])
+        lines.append("")
+        lines.append(f"Built-in tools for comparison: {top}.")
+
+    lines.append("")
+    lines.append(f"_A connector is resident on every turn of every session where it is enabled, "
+                 f"whether or not it is called — so an unused one is a fixed tax on the whole "
+                 f"corpus, and the cheapest saving available. Under "
+                 f"{th['low_use_per_1k_turns']} call per 1,000 resident turns reads as rarely used._")
+    lines.append("")
+    lines.append("_Residency is approximate: nothing records which connectors a PAST session had, "
+                 "so a connector is credited with the turns of the projects it is configured for. "
+                 "Correct for a stable config, an over-estimate for one enabled recently. Usage and "
+                 "enablement are exact._")
+    return "\n".join(lines)
+
+
+def format_session(d: dict) -> str:
+    """Turn-by-turn: what one session's window was made of.
+
+    The other reports rank sessions; this explains one. "285 turns, 74.9M" says
+    a session was expensive and nothing about which reads made it so.
+    """
+    if not d.get("found"):
+        return f"### TokenDog session `{d['session']}`\n\n_{d.get('error', 'not found')}_"
+    t = d["totals"]
+    b = d["baseline"]
+    kind = "headless" if d["headless"] else "interactive"
+    lines = [f"### TokenDog session `{d['session']}` — {d.get('project') or '?'} ({kind})",
+             ""] + _window_lines(d)
+    lines.append(f"{t['turns']:,} turns · {t['input']:,} input · {t['output']:,} output · "
+                 f"peak {t['peak_context']:,} · {len(d['segments'])} context(s)"
+                 + (f" · {_rate(t.get('burn_per_min'))}" if t.get("burn_per_min") else ""))
+    w = d.get("window_totals")
+    if w:
+        # The window's own figures, kept separate from the session's. Every
+        # per-turn cost above is measured against the whole session on purpose
+        # — see `session_detail` — so collapsing the two would misreport both.
+        lines.append(f"**In window:** {w['turns']:,} turns · {_tok(w['input'])} input · "
+                     f"{_rate(w.get('burn_per_min'))} · peak {w['peak_context']:,}"
+                     + (f" · {w['first'][11:16]}→{w['last'][11:16]}" if w["first"] else ""))
+    lines.append("")
+
+    lines.append("**The floor** — carried by every turn before anything is typed:")
+    lines.append("")
+    lines.append("| Part | Tokens |")
+    lines.append("|---|--:|")
+    if b["tool_schemas"]:
+        lines.append(f"| Tool schemas (all enabled connectors) | {b['tool_schemas']:,} |")
+    lines.append(f"| Skills, always-on | {b['skills_always_on']:,} |")
+    lines.append(f"| Instruction files | {b['instruction_files']:,} |")
+    lines.append(f"| Remainder — {b['remainder_note']} | {b['remainder']:,} |")
+    lines.append(f"| **First turn total** | **{b['total']:,}** |")
+    if not b["have_inventory"]:
+        lines.append("")
+        lines.append("_No tool inventory captured, so schema size is inside the remainder. "
+                     "Run `tokendog surface --refresh` to separate it._")
+
+    if len(d["segments"]) > 1:
+        lines.append("")
+        lines.append("**Contexts** — a reset starts a fresh one inside the same file:")
+        lines.append("")
+        lines.append("| # | Turns | First → peak → last | Hours |")
+        lines.append("|--:|--:|--:|--:|")
+        for sg in d["segments"]:
+            lines.append(f"| {sg['number']} | {sg['turns']:,} | {sg['first_context']:,} → "
+                         f"{sg['peak_context']:,} → {sg['last_context']:,} | {sg['hours']} |")
+
+    lines.append("")
+    lines.append("**Costliest additions** — size × the turns that then re-read it:")
+    lines.append("")
+    lines.append("| Turn | Time | Added | Re-read by | Carried | What arrived |")
+    lines.append("|--:|---|--:|--:|--:|---|")
+    for tn in d["top_turns"]:
+        what = ", ".join(f"`{x['name']}`" + (f" {x['detail'][:46]}" if x["detail"] else "")
+                         for x in tn["tools"]) or "—"
+        lines.append(f"| {tn['index']} | {tn['at'][5:16]} | {tn['delta']:,} | "
+                     f"{tn['turns_after']:,} | {tn['carried']:,} | {what} |")
+
+    if d["by_tool"]:
+        lines.append("")
+        lines.append("**By tool**, across the whole session:")
+        lines.append("")
+        lines.append("| Tool | Calls | Result tokens | Carried |")
+        lines.append("|---|--:|--:|--:|")
+        for r in d["by_tool"][:12]:
+            lines.append(f"| `{r['tool']}` | {r['calls']:,} | {r['tokens']:,} | {r['carried']:,} |")
+
+    lines.append("")
+    lines.append(f"_Residual across all turns: {t['residual']:,} tokens — growth not attributable "
+                 "to a tool result or the previous reply (a typed message, an injected reminder). "
+                 "Reported rather than assigned to whichever category is nearest._")
+    lines.append("")
+    lines.append("_`Carried` is what an addition cost after it arrived: its size times the turns "
+                 "that re-read it before the next reset. Counting past a reset would charge a read "
+                 "for turns that never saw it._")
     return "\n".join(lines)
 
 
@@ -323,6 +928,12 @@ def doctor_report(cwd: str) -> str:
     ])
 
 
+# The reports whose figures are per-turn, and so can be scoped to a time range.
+# `cost` is absent on purpose: its --since/--until are dates for the SQL
+# roll-up, a different (and older) meaning of the same two flag names.
+WINDOWED_COMMANDS = ("bands", "resumes", "coldstart", "hygiene", "surface", "session", "outcomes", "errors", "pipelines")
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="tokendog")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -356,11 +967,93 @@ def main(argv=None) -> int:
     bd = sub.add_parser("bands")
     bd.add_argument("--project")
 
+    rs = sub.add_parser("resumes", help="windows carried past the moment to reset")
+    rs.add_argument("--project")
+
+    cs = sub.add_parser("coldstart", help="discovery paid for more than once")
+    cs.add_argument("--project")
+
+    hy = sub.add_parser("hygiene", help="which sessions were managed, and what drift cost")
+    hy.add_argument("--project")
+
+    se = sub.add_parser("session", help="turn-by-turn drilldown of one session")
+    se.add_argument("id", help="session/transcript id, or any unique prefix")
+    se.add_argument("--top", type=int, default=15)
+    se.add_argument("--json", action="store_true", dest="as_json")
+
+    sf = sub.add_parser("surface", help="what is in the window before the conversation starts")
+    sf.add_argument("--project")
+    sf.add_argument("--refresh", action="store_true",
+                    help="start each enabled connector to measure its tool schemas, and cache "
+                         "the result. The only tokendog command that launches anything")
+    sf.add_argument("--timeout", type=float, default=None,
+                    help="seconds to wait per connector when refreshing")
+    sf.add_argument("--json", action="store_true", help="emit the raw view-model")
+    sf.add_argument("--disable", metavar="CONNECTOR",
+                    help="turn a connector off (dry run unless --apply)")
+    sf.add_argument("--enable", metavar="CONNECTOR",
+                    help="turn a previously disabled connector back on")
+    sf.add_argument("--apply", action="store_true",
+                    help="actually make the edit, after backing the file up")
+    sf.add_argument("--force", action="store_true",
+                    help="disable even a connector with recorded calls")
+
+    sv = sub.add_parser("serve", help="local dashboard over the same figures")
+    sv.add_argument("--port", type=int, default=None)
+    sv.add_argument("--address", default=None,
+                    help="interface to bind (default loopback; anything else is "
+                         "unauthenticated and shows project names and token counts)")
+    sv.add_argument("--project")
+    sv.add_argument("--quiet", action="store_true", help="suppress per-request logging")
+
+    # Every report that measures turns takes the same window. Added in one loop
+    # so a new windowed report cannot be added with a differently-spelled flag.
+    er = sub.add_parser("errors", help="which tools/MCP servers fail most, and how")
+    er.add_argument("--project")
+    pl = sub.add_parser("pipelines", help="Claude spend per Glitch pipeline (reads .glitch/runs)")
+    pl.add_argument("--project")
+    oc = sub.add_parser("outcomes", help="cost per merged PR — links sessions to commits to PRs")
+    oc.add_argument("--project")
+    oc.add_argument("--gh", action="store_true",
+                    help="resolve PR numbers via the GitHub CLI when the local history has no "
+                         "merge commit (squash-merge). Uses gh; GitHub rate limit, not Claude tokens")
+    oc.add_argument("--all-authors", action="store_true",
+                    help="attribute commits by anyone, not just this machine's git email "
+                         "(default is owner-only, to avoid mis-linking a teammate's commit)")
+
+    for _p in (bd, rs, cs, hy, sf, se, oc, er, pl):
+        _p.add_argument("--since", metavar="WHEN",
+                        help="only turns at or after this time: 17:29, 2026-09-08, "
+                             "2026-09-08T17:29, or a span back from now like 90m / 3h / 2d")
+        _p.add_argument("--until", metavar="WHEN",
+                        help="only turns before this time; same forms as --since")
+
+    ih = sub.add_parser("install-hook",
+                        help="stamp the Claude session id into commits (exact PR attribution)")
+    ih.add_argument("--target", default=".", help="repo to install into (default: cwd)")
+    ih.add_argument("--remove", action="store_true", help="remove the hook tokendog installed")
+    ih.add_argument("--status", action="store_true", help="show what is installed, change nothing")
+    ih.add_argument("--force", action="store_true", help="append to an existing foreign hook")
+
     i = sub.add_parser("init")
     i.add_argument("--target", default=".")
     i.add_argument("--force", action="store_true")
 
     args = p.parse_args(argv)
+
+    # One window, resolved once, for the reports that take turn-level ranges.
+    # `cost` is deliberately not among them: its --since/--until are dates
+    # handed to the SQL roll-up, and reinterpreting them here would change the
+    # meaning of a flag that already worked.
+    win = None
+    if args.cmd in WINDOWED_COMMANDS:
+        from .window import WindowError, resolve
+        try:
+            win = resolve(args.since, args.until)
+        except WindowError as exc:
+            print(f"tokendog {args.cmd}: {exc}")
+            return 2
+
     if args.cmd == "cost":
         print(format_rollup(cost_summary(args.group_by, args.since, args.until,
                                          args.glitch_db, project=args.project)))
@@ -401,12 +1094,95 @@ def main(argv=None) -> int:
         from .savings import savings_summary
         print(format_savings(savings_summary()))
     elif args.cmd == "bands":
-        print(format_bands(band_report_data(project=args.project)))
+        print(format_bands(band_report_data(project=args.project, window=win)))
+    elif args.cmd == "resumes":
+        from .limit_resume import resume_report_data
+        print(format_resumes(resume_report_data(project=args.project, window=win)))
+    elif args.cmd == "coldstart":
+        from .cold_start import cold_start_report_data
+        print(format_cold_start(cold_start_report_data(project=args.project, window=win)))
+    elif args.cmd == "hygiene":
+        from .hygiene import hygiene_report_data
+        print(format_hygiene(hygiene_report_data(project=args.project, window=win)))
+    elif args.cmd == "errors":
+        from .errors import tool_errors
+        print(format_errors(tool_errors(project=args.project, window=win)))
+    elif args.cmd == "pipelines":
+        from .glitch_runs import pipeline_costs
+        print(format_pipelines(pipeline_costs(project=args.project, window=win)))
+    elif args.cmd == "outcomes":
+        from .outcomes import outcomes_data
+        print(format_outcomes(outcomes_data(project=args.project, window=win,
+                                            use_gh=getattr(args, "gh", False),
+                                            own_author_only=not getattr(args, "all_authors", False))))
+    elif args.cmd == "session":
+        from .session_detail import session_detail
+        data = session_detail(args.id, top=args.top, window=win)
+        print(json.dumps(data, indent=1) if args.as_json else format_session(data))
+    elif args.cmd == "surface":
+        from .surface import probe_configs, save_inventory, surface_report_data
+        if args.disable or args.enable:
+            from .disable import apply as apply_change, format_plan, plan
+            name = args.disable or args.enable
+            turning_on = bool(args.enable)
+            if args.disable and not args.force:
+                data = surface_report_data()
+                row = next((c for c in data["connectors"]
+                            if c["connector"] == name), None)
+                if row and row["calls"]:
+                    print(f"`{name}` has {row['calls']:,} recorded call(s) "
+                          f"({row['calls_per_1k_turns']} per 1k turns). Refusing to disable "
+                          "something in use — pass --force if that is what you mean.")
+                    return 1
+            if args.apply:
+                print(format_plan(apply_change(name, enable=turning_on), applied=True))
+            else:
+                print(format_plan(plan(name, enable=turning_on)))
+            return 0
+        if args.refresh:
+            from .surface_probe import DEFAULT_TIMEOUT, format_probe, probe_connectors
+            configs = probe_configs()
+            if not configs:
+                print("No connector has a launch config to probe.")
+            else:
+                print(f"Starting {len(configs)} connector(s) to read their tool lists. "
+                      "This is the one command that launches anything; a server may prompt "
+                      "for credentials.")
+                sizes, results = probe_connectors(
+                    configs, timeout=args.timeout or DEFAULT_TIMEOUT)
+                print(format_probe(results))
+                path = save_inventory(sizes)
+                print(f"Cached {len(sizes)} tool size(s) to {path}")
+                print()
+        data = surface_report_data(project=args.project, window=win)
+        if args.json:
+            print(json.dumps(data, indent=1))
+        else:
+            print(format_surface(data))
+    elif args.cmd == "serve":
+        from .server import serve, DEFAULT_PORT, DEFAULT_ADDRESS
+        return serve(port=args.port or DEFAULT_PORT,
+                     address=args.address or DEFAULT_ADDRESS,
+                     project=args.project, quiet=args.quiet)
+    elif args.cmd == "install-hook":
+        from .hooks import install, remove, hook_status, format_install
+        if args.status:
+            st = hook_status(args.target)
+            print(f"{args.target}: " + ("installed" if st["installed"]
+                  else "foreign hook present" if st["foreign"]
+                  else "not installed" if st["is_repo"] else "not a git repo")
+                  + (f" ({st['path']})" if st.get("path") else ""))
+        elif args.remove:
+            print(format_install(remove(args.target)))
+        else:
+            print(format_install(install(args.target, force=args.force)))
     elif args.cmd == "init":
         written = apply_templates(repo_templates_dir(), args.target, force=args.force)
         for p in written:
             print(f"wrote {p}")
         print("Edit CLAUDE.md below the TOKENDOG_EXTENSION_MARKER for org-specific instructions.")
+        print("A statusLine was added to .claude/settings.json — context occupancy, session age "
+              "and the 5h/7d limits, on screen while you work.")
     return 0
 
 

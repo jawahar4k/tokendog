@@ -113,6 +113,22 @@ Measure first; optimize second. Items 32 and 33 are prerequisites for tuning any
 | 36 | Per-user / per-team hard budgets | `scripts/budget_enforce.py` + `tokendog.budget` | Shipped (Slice 2) |
 | 37 | Slack/webhook alerts when session exceeds threshold | `scripts/budget_alert.py` | Shipped (Slice 2) |
 
+Beyond the original 47, an analysis + forensics layer was added on top of the same measurement
+spine — all deterministic, transcript-only, no API key or LLM call:
+
+| Report | Module | What it answers |
+|---|---|---|
+| `bands` | `bands.py` | Turns grouped by context occupancy — where the tokens actually are |
+| `hygiene` | `hygiene.py` | Was a session managed? Burn rate, resets, subagent roll-up, and the `excess` it carried above a threshold |
+| `resumes` | `limit_resume.py` | A large window carried past an obvious reset point |
+| `coldstart` | `cold_start.py` | Discovery paid for more than once across headless runs |
+| `surface` | `surface.py` | What every prompt carries before you type; `--disable` turns a connector off (reversible) |
+| `session <id>` | `session_detail.py` | Turn-by-turn: what entered the window each turn and what it then cost |
+| `errors` | `errors.py` | Per-tool error rate + dominant failure category (pattern-matched) |
+| `outcomes` / `pipelines` | `outcomes.py`, `glitch_runs.py`, `hooks.py` | Cost per merged PR / per Glitch pipeline; a `prepare-commit-msg` hook stamps the session id for EXACT links |
+| time windows | `window.py` | `--since`/`--until` on every report above — local clock times, dates, spans; scopes turns, not a session's age |
+| dashboard | `server.py`, `static/` | All of the above as one loopback page, colourblind-safe, one global range control |
+
 ---
 
 ## G · Org-wide defaults

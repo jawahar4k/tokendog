@@ -40,6 +40,9 @@ criteria. Every slice's code is test-covered; the Python and Rust suites are gre
 | 5 · Docs + benchmarks | mkdocs site (all 47 items), Headroom comparison, FAQ; benchmark harness | Benchmark shows large truncation savings on log-shaped fixtures. **No release performed.** |
 | 6 · Rust gate core | `tokendog-gate` crate: compress, canonical ordering + cache pooling, dedup, usage parse, budgets + CLI | serde_json-only; live proxy scoped as follow-up. |
 | 7 · Advanced gate | CCR reversible retrieve, head+tail truncation, session persistence, exact-match Q→A cache | Semantic cache, SQLite CCR, Ollama, Memory API documented as follow-ups. |
+| 8 · Analysis + forensics | `bands` `hygiene` `resumes` `coldstart` `surface` `session` detectors on the measurement spine; `window.py` adds `--since`/`--until` to every one | Prompted by a real rate-limit incident — the tool could say what was expensive across history but not what happened in a 16-minute window. Deterministic, transcript-only. |
+| 9 · Dashboard + identity | stdlib `server.py` + `static/` (loopback page, lazy git-backed tabs, sortable last-used session table, per-session drawer); a distinct "watchdog console" look, colourblind-safe (status = shape + word, never colour alone) | Most users only open the page; the CLI is the engine behind it. One global range control scopes every tab. |
+| 10 · Outcome attribution | `outcomes.py` (cost per merged PR), `glitch_runs.py` (spend per Glitch pipeline, from `.glitch/runs`), `errors.py` (tool error rates), `hooks.py` + `install-hook` (a `prepare-commit-msg` trailer stamping `CLAUDE_CODE_SESSION_ID` — which equals the transcript id — for EXACT session→commit links) | Closes the tuneloop-parity gap deterministically: no LLM, no added token spend. `--gh` resolves squash-merge PRs via the GitHub CLI. |
 
 ## Review findings the pipeline caught (examples)
 

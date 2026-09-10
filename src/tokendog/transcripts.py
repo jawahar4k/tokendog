@@ -11,11 +11,24 @@ from .event import TokenEvent, RUNTIME_CLAUDE, SOURCE_TRANSCRIPT
 # tiktoken approximation entirely.
 #
 # DEFINITION OF A TURN (fix this here so consumers don't each pick their own):
-#   one metered turn == one assistant record whose `message.usage` is present.
+#   one metered turn == one API RESPONSE, identified by `requestId`.
 # Records without usage (user turns, tool results, meta records) are not turns
-# and are skipped. A record's `message.usage` is the usage for that record
-# alone; do not additionally sum any nested per-iteration usage, or every turn
-# is counted twice.
+# and are skipped. Do not additionally sum any nested per-iteration usage, or
+# every turn is counted twice.
+#
+# NOT one record: a single response is written as one record PER CONTENT BLOCK
+# (thinking, text, tool_use), and every one of those records repeats the same
+# `message.usage`. Counting records instead of responses inflated turns and
+# input tokens by ~2x on real transcripts (measured 3,749 records against 1,860
+# responses in one session; a response writes 1-3 records).
+#
+# Within one response the input-side figures repeat verbatim, but
+# `output_tokens` is written as it streams -- the early records carry partial
+# counts and only the LAST record carries the final total. So the last record
+# of a response wins; taking the first would undercount output by most of it.
+# Records of a response are consecutive in the file, so the reader flushes the
+# previous response when the requestId changes and stays streaming rather than
+# buffering a whole transcript.
 
 DEFAULT_TRANSCRIPT_ROOT = "~/.claude/projects"
 
@@ -73,8 +86,23 @@ def project_of(record: dict) -> str | None:
     return PurePosixPath(cwd.strip().rstrip("/")).name or None
 
 
+def tool_names(message: dict) -> list[str]:
+    """Tool names invoked by one record's content blocks, in order."""
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return []
+    names = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            name = block.get("name")
+            if isinstance(name, str) and name:
+                names.append(name)
+    return names
+
+
 def event_from_record(record: dict, *, session_id: str | None = None,
-                      transcript_id: str | None = None) -> TokenEvent | None:
+                      transcript_id: str | None = None,
+                      entrypoint: str | None = None) -> TokenEvent | None:
     """Build a TokenEvent from one transcript record, or None if it is not a turn."""
     if not isinstance(record, dict):
         return None
@@ -103,7 +131,30 @@ def event_from_record(record: dict, *, session_id: str | None = None,
         inference_geo=usage.get("inference_geo"),
         model=message.get("model"),
         project=project_of(record),
+        entrypoint=record.get("entrypoint") or entrypoint,
+        tools=tool_names(message) or None,
     )
+
+
+def response_key(record: dict) -> str | None:
+    """Identify the API response a record belongs to.
+
+    `requestId` is the harness's own id for one call and is present on every
+    usage-bearing record it writes. `message.id` is the provider's id for the
+    same response and is the fallback. Returns None when neither exists, which
+    leaves the record ungrouped rather than merging it into its neighbour.
+    """
+    if not isinstance(record, dict):
+        return None
+    rid = record.get("requestId")
+    if isinstance(rid, str) and rid:
+        return rid
+    message = record.get("message")
+    if isinstance(message, dict):
+        mid = message.get("id")
+        if isinstance(mid, str) and mid:
+            return mid
+    return None
 
 
 def read_transcript(path) -> Iterator[TokenEvent]:
@@ -119,6 +170,14 @@ def read_transcript(path) -> Iterator[TokenEvent]:
     except OSError:
         return
     with handle as f:
+        # One response spans several records; hold the newest and emit it when
+        # the requestId changes, so each response yields exactly one turn with
+        # its final (not partial) output count.
+        held: TokenEvent | None = None
+        held_key: str | None = None
+        # The entrypoint is stated on the session's opening records, not on
+        # every one, so it is remembered and stamped on the turns that follow.
+        entrypoint: str | None = None
         for line in f:
             line = line.strip()
             if not line:
@@ -127,10 +186,34 @@ def read_transcript(path) -> Iterator[TokenEvent]:
                 record = json.loads(line)
             except (json.JSONDecodeError, TypeError, ValueError):
                 continue
+            entrypoint = record.get("entrypoint") or entrypoint
             event = event_from_record(record, session_id=session_id,
-                                      transcript_id=session_id)
-            if event is not None:
+                                      transcript_id=session_id,
+                                      entrypoint=entrypoint)
+            if event is None:
+                continue
+            key = response_key(record)
+            if key is None:
+                # No response id to group on: emit whatever is held, then this
+                # record on its own rather than silently folding it into a
+                # neighbouring response.
+                if held is not None:
+                    yield held
+                    held, held_key = None, None
                 yield event
+                continue
+            if held_key is not None and key != held_key:
+                yield held
+            elif held is not None and key == held_key:
+                # Same response, a further content block. Usage is identical
+                # except for output (last wins), but the TOOLS differ per block
+                # — so union them or a multi-tool response reports only its
+                # last tool.
+                merged = list(dict.fromkeys((held.tools or []) + (event.tools or [])))
+                event.tools = merged or None
+            held, held_key = event, key
+        if held is not None:
+            yield held
 
 
 def read_transcripts(root=None) -> Iterator[TokenEvent]:

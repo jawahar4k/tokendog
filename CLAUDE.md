@@ -1,10 +1,10 @@
 # CLAUDE.md — TokenDog
 
-Guidance for Claude Code (and other agents) working in this repo.
+Guidance for coding agents working in this repo.
 
 ## What this is
 
-**TokenDog** — an open-source framework that measures and reduces Claude Code / Glitch token
+**TokenDog** — an open-source framework that measures and reduces coding-agent / Glitch token
 spend across a developer org (target 30–60% reduction, no quality loss). The name is a **watchdog**
 metaphor: it watches token spend and barks when budgets are exceeded. The core is **deterministic**
 (static routing, statistical compression, cache pooling, budgets) — there are no ML/"neural" claims.
@@ -17,7 +17,7 @@ Build history + decisions: `docs/BUILD-HISTORY.md`. Per-slice specs/plans: `docs
 | Path | What |
 |---|---|
 | `src/tokendog/` | Python package: telemetry event model, tiktoken approximation, JSONL sink, SQLite cost backend, ingestion (incl. Glitch), reporting/CLI, budgets, truncation, templates |
-| `tokendog-plugin/` | Claude Code plugin: hooks, `tokendog-cost` MCP, frugal + hygiene skills, slash commands (`/tokendog:cost` `:doctor` `:budget` `:audit` `:init`), Glitch stop hook |
+| `tokendog-plugin/` | Agent plugin: hooks, `tokendog-cost` MCP, frugal + hygiene skills, slash commands (`/tokendog:cost` `:doctor` `:budget` `:audit` `:init`), Glitch stop hook |
 | `tokendog-templates/` | Drop-in `CLAUDE.md` + `settings.json` baselines, mcp-hygiene, example-extension |
 | `tokendog-mcp-toolkit/` | Standalone `tokendog_mcp` package: frugal helpers for MCP authors |
 | `tokendog-docs/` | mkdocs site documenting the full 47-item framework |
@@ -30,6 +30,7 @@ Build history + decisions: `docs/BUILD-HISTORY.md`. Per-slice specs/plans: `docs
 pip install -e ".[dev]"            # install the Python package
 python -m pytest -q                # Python suite (src + toolkit + benchmarks + plugin wiring)
 python -m tokendog.report cost     # cost rollup CLI
+python -m tokendog.report hygiene --since 17:29 --until 17:45   # scoped to a time range
 python -m benchmarks.run           # savings benchmark
 
 cd tokendog-gate && cargo test     # Rust gate suite
@@ -45,7 +46,7 @@ Pytest resolves `src`, `tokendog-mcp-toolkit/py`, and `benchmarks` via `pyprojec
   intentional block is `budget_enforce`'s explicit PreToolUse deny (which itself fails open on error).
 - Every `TokenEvent` sets `runtime` = `"claude-code"` or `"glitch"`. Cross-runtime attribution fields
   (`runtime`, `pipeline`, `run_id`, `agent`, `cluster`) are part of the schema — don't drop them.
-- **Cost comes only from authoritative usage.** Claude Code transcripts (`message.usage`) and Glitch's
+- **Cost comes only from authoritative usage.** Agent transcripts (`message.usage`) and Glitch's
   stop hook are authoritative and are what get priced. Hook events carry a tiktoken approximation of
   tool-payload *volume* (`tool_payload_tokens`) and are never priced — those bytes are already billed
   by the turn that carries them. `TokenEvent.source` records which is which.
@@ -75,7 +76,7 @@ wiring, SQLite-backed CCR, embedding-based semantic cache, local Ollama offload,
 
 ## Glitch interop (important)
 
-TokenDog is a first-class second runtime for **Glitch** as well as Claude Code. Glitch has native
+TokenDog is a first-class second runtime for **Glitch** as well as the coding agent. Glitch has native
 agent-lifecycle hooks whose `stop` hook exposes authoritative token counts; TokenDog ships a Glitch
 stop hook and ingests Glitch's `firmware.db` `context_log`. Integrate with Glitch's memory rather than
 duplicating it. See `docs/BUILD-HISTORY.md` for details.

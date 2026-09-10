@@ -6,33 +6,34 @@ Everything TokenDog implements today, grouped by layer, with the benefit and the
 ## Where the money actually goes (three levers)
 
 Each lever below was sized against real transcripts rather than assumed. The figures are one
-developer's history — 210 transcripts, 30,773 metered turns, 10.0B tokens, $8,409 — and a second
-seat reported the same *shape* with different magnitudes (output 14.5% there, 9.0% here). Treat
+developer's history — 255 transcripts, 19,466 metered turns, 6.33B tokens, $4,884 — and a second
+seat reported the same *shape* with different magnitudes (output 14.5% there, 8.9% here). Treat
 the ordering as robust and the exact percentages as local: run `tokendog cost` and `tokendog bands`
 on your own data before acting on any of it.
 
 | Bucket | % of tokens | % of cost | Lever |
 |---|--:|--:|---|
-| Cache read | 96.6% | 56.5% | 1 — carry less |
-| Cache write | 3.1% | 34.6% | 2 — rewrite less |
-| Output | 0.3% | 9.0% | 3 — generate less |
+| Cache read | 97.4% | 62.2% | 1 — carry less |
+| Cache write | 2.3% | 28.9% | 2 — rewrite less |
+| Output | 0.3% | 8.9% | 3 — generate less |
 | Fresh input | 0.0% | 0.0% | — |
 
-The token and cost columns disagree violently, which is the whole point: cache reads are 96.6% of
+The token and cost columns disagree violently, which is the whole point: cache reads are 97.4% of
 the tokens at 0.1× the input rate, output is 0.3% of the tokens at 5× it. Counting tokens tells you
 almost nothing about the bill.
 
-**Lever 1 — Carry less (56.5% of cost).** Every token resident in the context window is re-read and
+**Lever 1 — Carry less (62.2% of cost).** Every token resident in the context window is re-read and
 re-billed on *every subsequent turn*. One read is cheap; the multiplier is the turn count, and it
 compounds silently. On Opus, carrying 1 MTok costs $0.50 per turn against $25 to generate 1 MTok
 once — so **a token you carry for 50 turns costs more than a token you generate.** Measured here:
-50.2% of turns run at ≥200k context and account for 82.4% of the bill. Served by output truncation
-(what a turn stores is what later turns carry), `/clear` hygiene, session lifecycle, and `bands` to
-locate where context accumulates.
+50.9% of turns run at ≥200k context and carry 84.4% of all context tokens. Served by output truncation
+(what a turn stores is what later turns carry), `/clear` hygiene, session lifecycle, the statusline
+(occupancy on screen while you work), and `bands` / `hygiene` / `resumes` to locate where context
+accumulates and where it was carried past a reset.
 
-**Lever 2 — Rewrite less (34.6%).** Cache *writes*, not reads. Anything that invalidates the cached
+**Lever 2 — Rewrite less (28.9%).** Cache *writes*, not reads. Anything that invalidates the cached
 prefix makes you pay to rebuild it, at 1.25× the input rate for a 5-minute TTL and 2× for one hour.
-On this data 1-hour writes are 33.0% of the bill and 5-minute writes 1.6% — which is why the
+On this data 1-hour writes are 27.8% of the bill and 5-minute writes 1.1% — which is why the
 ephemeral 5m/1h split must survive ingestion rather than being collapsed into one scalar. Served by
 canonical ordering, pooled cache keys, and dedup: a stable prefix is one you stop paying to rebuild.
 
@@ -71,24 +72,36 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
-| Telemetry event model (`event.py`) | `TokenEvent` schema with cross-runtime fields (runtime, pipeline, run_id, agent, cluster, tool, model) | One consistent record for both Claude Code & Glitch | Passive |
+| Telemetry event model (`event.py`) | `TokenEvent` schema with cross-runtime fields (runtime, pipeline, run_id, agent, cluster, tool, model) | One consistent record for both the agent & Glitch | Passive |
 | Intervention ledger (`effect.py`) | Before/after tool-payload volume, scoping compliance, and cost-per-turn by turn position — all from transcripts, retroactively | Answers 'did the change help', which `savings` could not: it only measured truncation, so it read 0.0% forever with truncation off. A flat result is reported as flat, not as an absence of measurement | Passive |
 | Project attribution (`transcripts.py`) | Derives `project` from each turn's recorded `cwd`, as a basename | `~/.claude/projects` holds every project on the machine; without this a roll-up answers "what did this laptop spend". Basename only — a full path leaks the home directory and often a client name. Absent `cwd` means unknown, never a guess | Passive |
-| Transcript reader (`transcripts.py`) | Reads **authoritative** per-turn `message.usage` from Claude Code transcripts, preserving the ephemeral 5m/1h cache split, `service_tier` and `inference_geo` | The cost path. One metered turn = one assistant record carrying `message.usage` | Passive |
+| Transcript reader (`transcripts.py`) | Reads **authoritative** per-turn `message.usage` from agent transcripts, preserving the ephemeral 5m/1h cache split, `service_tier` and `inference_geo` | The cost path. One metered turn = one API **response** (`requestId`), not one record: a response is written once per content block and each copy repeats the same usage, so counting records inflated turns and input by ~2x. The last record of a response wins, because `output_tokens` streams and only the last carries the total | Passive |
 | tiktoken approximation (`approx.py`) | Estimates tokens for any text | Sizing tool payloads only — **not** a billing path | Passive |
 | JSONL sink (`sink.py`) | Appends events to a daily `.jsonl` file, with a per-day size cap (`TOKENDOG_MAX_SINK_MB`, default 64) and a retention window (`TOKENDOG_RETENTION_DAYS`, default 30); records every failed write to a health file | Durable, greppable local audit trail that cannot grow without bound or stop silently | Passive |
 | SQLite cost backend (`backend.py`) | Grouped roll-ups (by runtime / tool / session / model / source / tier / geo) | Fast "where do my tokens go?" queries | Passive |
 | Pricing / cost (`pricing.py`) | Prices all four buckets per model: fresh input, output, cache read (0.1×), cache write (1.25× at 5m / 2× at 1h) | Cache is ~85–93% of a real agent bill; pricing it is the difference between a right and a wrong number | Passive |
-| Ingestion (`ingest.py`) | Loads transcripts + the sink + Glitch `firmware.db` `context_log`; redacts file paths to basename at the emitter | Unified Claude + Glitch spend view, without leaking project/user/customer names | Passive |
+| Ingestion (`ingest.py`) | Loads transcripts + the sink + Glitch `firmware.db` `context_log`; redacts file paths to basename at the emitter | Unified agent + Glitch spend view, without leaking project/user/customer names | Passive |
 | Context bands (`bands.py`) | Buckets every metered turn by context size (cache read + cache write + fresh input), reports concentration and peak context per transcript | Answers "how big was the context when it was spent" — the dimension runtime/tool/session/model cannot express | Passive |
-| Reporting CLI (`report.py`) | `cost` `doctor` `budget` `audit` `savings` `bands` `init` | One command line for all insight | Passive |
+| Reporting CLI (`report.py`) | `cost` `doctor` `budget` `audit` `savings` `bands` `resumes` `coldstart` `hygiene` `surface` `session` `outcomes` `pipelines` `errors` `serve` `install-hook` `init` | One command line for all insight | Passive |
+| Outcome & pipeline attribution (`outcomes.py`, `glitch_runs.py`, `hooks.py`) | Cost per merged PR and per Glitch pipeline; a `prepare-commit-msg` hook stamps the session id for EXACT links | Turns anonymous spend into "what shipped, and what it cost" — deterministic, no LLM | Passive |
+| Tool errors (`errors.py`) | Per-tool call/error rate + dominant failure category, pattern-matched | A failing tool bills twice (failure + retry); flags the ones worth fixing, no model call | Passive |
+| Time windows (`window.py`) | `--since` / `--until` on every turn-measuring report: local clock times, dates, ISO instants, spans (`90m`/`3h`/`2d`), `today`/`yesterday` | A rate limit is spent in minutes; a calendar range cannot see it. Scopes TURNS, never a session's own age | Passive |
+| Resumes at the wall (`limit_resume.py`) | Finds a pause of 30+ min followed by a turn carrying 400k+ — a window carried past the natural moment to reset it — and reports the escalation across a session | A band says a turn was costly; this says it was *avoidable*. Attribution stops at the next decision point so segments never overlap | Passive |
+| Cold-start duplication (`cold_start.py`) | Groups non-interactive runs by project and prices the ramp each one climbed to get up to speed | An interactive session carries too much; a headless run carries nothing, every time. The waste exists only in the comparison between runs | Passive |
+| Session hygiene (`hygiene.py`) | Growth, resets, `excess` — the tokens carried ABOVE the 200k threshold — plus burn rate, subagent roll-up, and the cache-read / 5m / 1h / fresh split at its billing weights | The one avoidable-cost measure needing no counterfactual: it only counts what was carried over a line the session could have held. Owns every occupancy / age / idle threshold and the severity rules | Passive |
+| Dashboard view-model (`views.py`) | Assembles every figure the page shows in one pass, and doubles as the export contract | One definition of a band, a resume and a finding, so a second surface renders them rather than re-deriving them | Passive |
+| Session drilldown (`session_detail.py`) | Per-turn: occupancy, what entered, which tool brought it, and what that addition cost after it arrived (size × the turns that re-read it, bounded at the next reset). Splits the floor into schemas / skills / instructions / labelled remainder | Every other report ranks sessions; this explains one. Answers "which reads made this expensive", which a total cannot | Passive |
+| Context surface (`surface.py`) | Groups the tool surface by CONNECTOR — scope, enablement, which tools were called, turns resident, calls per 1,000 turns — and prices the always-on local surface (skills split into always-on frontmatter vs on-invoke body). Reads config and disk only | The other detectors size the window; this one says what is IN it. An unused connector is a fixed tax on every prompt and the cheapest possible saving | Passive |
+| Connector probe (`surface_probe.py`) | Starts each enabled connector, lists its tools, sizes each schema, caches to `~/.tokendog/surface.json` | Schema sizes are a property of the request and the transcript keeps the response, so they are measured or they are guessed. One at a time, timeout-bounded, stderr captured, failures reported not raised | Active — **opt-in via `--refresh`** |
+| Disable / re-enable (`disable.py`) | Removes a global server, lists a project one as disabled, or switches a plugin off. Dry run by default; backs up, stashes the config, restores verbatim | The only module that writes the reader's configuration. Refuses a connector with recorded calls without `--force`: the thing that recommends and the thing that acts should not be one judgement | Active (Lever 1) — **dry run by default** |
+| Local server (`server.py`) | Two GET routes on loopback serving one page and one JSON document; ingest cached, refresh explicit | Standard library only — a web framework would be the first dependency here not carrying its weight | Passive |
 | Budgets (`budget.py`) | Daily / session / alert limits + webhook | Spend guardrails (enforcement runs in the hook) | Passive |
 | Truncation logic (`truncate.py`) | Head+tail cap of oversized text | Shrinks bloated tool output re-sent as context | Active (Lever 1) — **off by default** |
 | Savings ledger (`savings.py`) | Records every truncation (enforce vs shadow) to a separate ledger | The with/without comparison, per call | Passive |
 | Templates (`templates.py`) | Idempotent CLAUDE.md / settings install with an extension marker | Drop-in frugal config that preserves your edits | Instruct |
 | Config (`config.py`) | Resolves state dir (`~/.tokendog`, override `TOKENDOG_HOME`) | Isolatable, testable state | Passive |
 
-## Layer 2 — Claude Code plugin (`tokendog-plugin/`)
+## Layer 2 — Agent plugin (`tokendog-plugin/`)
 
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
@@ -103,6 +116,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | `tokendog-frugal` skill | Always-on terseness guidance to the model | Fewer output tokens — the 9% lever (Lever 3) | Instruct |
 | `tokendog-hygiene` skill | Session-hygiene practices (clear context, scope tools) | Avoids context bloat | Instruct |
 | Slash commands | `/tokendog:cost` `:doctor` `:budget` `:bands` `:audit` `:init` | Manual control surface | Passive |
+| Statusline (`scripts/statusline.py`) | Window occupancy, session age, and the 5-hour / 7-day limit percentages, with one nudge when a threshold trips. Thresholds are absolute token counts, not percentages of the window — 30% of a 1M window is 300k | The occupancy number was invisible while it mattered; this is the only surface that shows it *during* the session rather than afterwards. Self-contained: no `tokendog` import, so a broken interpreter cannot make it print errors on every keystroke. `TOKENDOG_STATUSLINE_TAG` sets or removes the brand mark | Passive |
 | Glitch stop hook + `tokendog-stop.sh` | Records authoritative Glitch token counts; shell wrapper needs no Python edit | First-class Glitch support | Passive |
 
 ## Layer 3 — Config templates (`tokendog-templates/`)
@@ -134,7 +148,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 ## Layer 6 — Optional Rust transport gate (`tokendog-gate/`)
 
 Only active if you run the gate as a proxy in front of the API. Most of it targets Lever 2 —
-the 34.6% of the bill spent rewriting a prefix that did not need to change.
+the 28.9% of the bill spent rewriting a prefix that did not need to change.
 
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
@@ -169,7 +183,7 @@ alters tool output. The features that can change what the model sees are gated:
 |---|---|---|---|
 | `truncate_output` | Silently shortens oversized tool output (hard content loss) | **off** | `TOKENDOG_TRUNCATE_MODE=enforce` (or `shadow` to only measure) |
 | `budget_enforce` | Denies calls once over budget | **off** (no limit set → never denies) | `/tokendog:budget --set-daily N` |
-| `tokendog-frugal` / `tokendog-hygiene` skills | Bias the model toward frugal reads/searches (no content dropped) | **on** — conservative, quality-preserving guidance | (disable per Claude Code plugin/skill settings if unwanted) |
+| `tokendog-frugal` / `tokendog-hygiene` skills | Bias the model toward frugal reads/searches (no content dropped) | **on** — conservative, quality-preserving guidance | (disable in the agent plugin/skill settings if unwanted) |
 
 Run `tokendog doctor` to see the live state of the quality-affecting features.
 

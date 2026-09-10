@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TokenDog — session</title>
+<style>
+/* Same tokens as the ledger: light is the base set, dark redefines only these
+   under both the OS query and an explicit stamp. */
+:root{
+  color-scheme:light;
+  --plane:#f4f4f1;--surface:#fcfcfb;--surface-2:#f7f7f4;
+  --ink:#0b0b0b;--ink-2:#52514e;--ink-3:#898781;
+  --rule:#e1e0d9;--rule-2:#c3c2b7;--accent:#2a78d6;
+  --b1:#86b6ef;--b2:#5598e7;--b3:#2a78d6;--b4:#1c5cab;--b5:#104281;
+  --critical:#d03b3b;--serious:#ec835a;--good:#0ca30c;
+  --critical-ink:#a52a2a;--serious-ink:#a4552f;--good-ink:#006300;
+  --shadow:0 1px 2px rgba(11,11,11,.05);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --plane:#0d0d0d;--surface:#1a1a19;--surface-2:#201f1e;
+  --ink:#fff;--ink-2:#c3c2b7;--ink-3:#898781;
+  --rule:#2c2c2a;--rule-2:#383835;--accent:#3987e5;
+  --b1:#184f95;--b2:#256abf;--b3:#3987e5;--b4:#6da7ec;--b5:#9ec5f4;
+  --critical-ink:#e66767;--serious-ink:#ec835a;--good-ink:#0ca30c;--shadow:none;}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --plane:#0d0d0d;--surface:#1a1a19;--surface-2:#201f1e;
+  --ink:#fff;--ink-2:#c3c2b7;--ink-3:#898781;
+  --rule:#2c2c2a;--rule-2:#383835;--accent:#3987e5;
+  --b1:#184f95;--b2:#256abf;--b3:#3987e5;--b4:#6da7ec;--b5:#9ec5f4;
+  --critical-ink:#e66767;--serious-ink:#ec835a;--good-ink:#0ca30c;--shadow:none;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font:400 14px/1.55 "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+.num{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+.wrap{max-width:1120px;margin:0 auto;padding:0 22px 72px}
+.masthead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;
+  padding:26px 0 0;border-bottom:1px solid var(--rule-2)}
+.masthead h1{display:flex;align-items:baseline;gap:9px;margin:0 0 14px;
+  font-size:19px;font-weight:600;letter-spacing:-.01em;line-height:1}
+.masthead h1 .mark{font-size:17px;line-height:1}
+.masthead .scope,.masthead .right{font-size:12px;color:var(--ink-3);margin-bottom:14px}
+.masthead .right{margin-left:auto;display:flex;gap:12px;align-items:baseline}
+.masthead a{color:var(--accent);text-decoration:none;border-bottom:1px dotted var(--rule-2)}
+.masthead a:hover{border-bottom-style:solid}
+section{padding:30px 0 0}
+h2{font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 4px}
+.lede{margin:0 0 18px;font-size:13.5px;color:var(--ink-2);max-width:62em}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+  border-bottom:1px solid var(--rule)}
+.tile{padding:18px 20px 18px 0}
+.tile+.tile{padding-left:20px;border-left:1px solid var(--rule)}
+.tile .k{font-size:11px;color:var(--ink-3);letter-spacing:.04em;text-transform:uppercase}
+.tile .v{font-size:24px;font-weight:600;margin-top:6px;letter-spacing:-.02em}
+.tile .n{font-size:12px;color:var(--ink-2);margin-top:3px}
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:3px;background:var(--surface)}
+table{border-collapse:collapse;width:100%}
+thead th{text-align:right;font-size:10.5px;font-weight:600;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-3);padding:11px 12px 9px;
+  border-bottom:1px solid var(--rule-2);white-space:nowrap;background:var(--surface-2)}
+thead th:first-child,thead th:last-child{text-align:left}
+tbody td{padding:9px 12px;border-bottom:1px solid var(--rule);font-size:12.5px;
+  text-align:right;white-space:nowrap}
+tbody td:first-child,tbody td:last-child{text-align:left}
+tbody td:last-child{white-space:normal;color:var(--ink-2);font-family:"IBM Plex Mono",Menlo,monospace;
+  font-size:11.5px;max-width:520px}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--surface-2)}
+.hot{color:var(--critical-ink);font-weight:600}
+.warm{color:var(--serious-ink)}
+.bar{display:inline-block;height:8px;border-radius:2px;background:var(--b3);vertical-align:1px}
+.floor{max-width:640px}
+.floor td:last-child{text-align:right;font-family:"IBM Plex Mono",Menlo,monospace;color:var(--ink)}
+.note{margin-top:16px;font-size:12px;color:var(--ink-3);max-width:64em}
+footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--rule);
+  font-size:12px;color:var(--ink-3);max-width:64em}
+footer b{color:var(--ink-2);font-weight:600}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.winbanner{margin:2px 0 20px;padding:8px 13px;border:1px solid var(--rule-2);border-left:3px solid var(--accent);
+  border-radius:3px;background:var(--surface-2);font-size:12.5px;color:var(--ink-2)}
+.winbanner b{color:var(--ink);font-weight:600}
+.h2row{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.sortby{font-size:11px;color:var(--ink-3);letter-spacing:.03em}
+.sortbtn{font:inherit;font-size:11.5px;color:var(--ink-2);background:transparent;border:1px solid var(--rule-2);
+  border-radius:3px;padding:3px 10px;margin-left:5px;cursor:pointer}
+.sortbtn:hover{background:var(--surface-2);color:var(--ink)}
+.sortbtn[aria-current="true"]{background:var(--ink);color:var(--plane);border-color:var(--ink)}
+tbody tr.out td{opacity:.4}
+tbody tr.out:hover td{opacity:.7}
+td.tnum{font-family:"IBM Plex Mono",Menlo,monospace;color:var(--ink-3)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="masthead">
+    <h1><span class="mark">&#128021;</span>TokenDog</h1>
+    <span class="scope mono" id="scope"></span>
+    <span class="right">
+      <a id="jsonlink" href="#">view as JSON</a>
+      <a id="backlink" href="/">&larr; all sessions</a>
+    </span>
+  </div>
+
+  <div id="winbanner" class="winbanner" hidden></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <section>
+    <h2>The floor</h2>
+    <p class="lede">Carried by every single turn, before anything is typed. The remainder is
+      labelled rather than split further: the API never reports what is inside a cached prefix,
+      so a finer breakdown would be invented.</p>
+    <div class="tablewrap floor">
+      <table><tbody id="floor"></tbody></table>
+    </div>
+  </section>
+
+  <section id="segsec" hidden>
+    <h2>Contexts</h2>
+    <p class="lede">A reset does not close the transcript — it starts a fresh context inside the
+      same file. The last one is the only one still live.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>#</th><th>Turns</th><th>First</th><th>Peak</th><th>Last</th><th>Hours</th></tr></thead>
+        <tbody id="segs"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="h2row">
+      <h2>Turn by turn</h2>
+      <span class="sortby">
+        sort:
+        <button type="button" class="sortbtn" data-sort="time" aria-current="true">chronological</button>
+        <button type="button" class="sortbtn" data-sort="carried">costliest first</button>
+      </span>
+    </div>
+    <p class="lede">What entered the window at each turn, and what it cost afterwards: its size
+      times the number of later turns that re-read it. <strong>Nothing re-reads it deliberately</strong>
+      — the model is stateless, so every request carries the whole conversation again, and anything
+      added early is paid for on every turn that follows. Rows are in <strong>time order</strong> by
+      default, so row two follows row one; switch to <em>costliest first</em> to rank by carried cost.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>#</th><th>Time</th><th>Context</th><th>Added</th><th>Re-read by</th><th>Carried</th><th></th><th>What arrived</th>
+        </tr></thead>
+        <tbody id="turns"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>By tool</h2>
+    <p class="lede">Result tokens are what a tool returned. Carried is what those results cost once
+      they were in the window — the gap between the two columns is the whole point.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Tool</th><th>Calls</th><th>Result tokens</th><th>Carried</th></tr></thead>
+        <tbody id="bytool"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+const D = __TOKENDOG_SESSION__;
+
+const fmt = n => n == null ? "—"
+  : n >= 1e9 ? (n/1e9).toFixed(2)+"B"
+  : n >= 1e6 ? (n/1e6).toFixed(1)+"M"
+  : n >= 1e3 ? Math.round(n/1e3)+"K" : String(n);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const el = id => document.getElementById(id);
+
+function render() {
+  if (!D || !D.found) {
+    el("scope").textContent = (D && D.error) || "session not found";
+    return;
+  }
+  const t = D.totals, b = D.baseline;
+  el("scope").textContent = D.session.slice(0, 8) + " · " + (D.project || "?")
+    + " · " + (D.headless ? "headless" : "interactive");
+  // Keep the selected range on both the JSON view and the way back, so the
+  // drilldown, its JSON, and the dashboard all stay on the same question.
+  const rangeQ = D.range ? "&range=" + encodeURIComponent(D.range) : "";
+  el("jsonlink").href = "/session/" + encodeURIComponent(D.session) + ".json?top=100" + rangeQ;
+  el("backlink").href = "/" + (D.range ? "?range=" + encodeURIComponent(D.range) : "");
+
+  // When a window is in play, say so and show what the slice cost — the same
+  // figures the dashboard row showed, so moving between them is continuous.
+  const wt = D.window_totals;
+  if (D.window) {
+    const bn = el("winbanner"); bn.hidden = false;
+    bn.innerHTML = "Window: <b>" + esc(D.window) + "</b>"
+      + (wt ? " · <b>" + wt.turns.toLocaleString() + "</b> of " + t.turns.toLocaleString()
+              + " turns here · <b>" + fmt(wt.input) + "</b> carried"
+              + (wt.burn_per_min ? " · " + fmt(wt.burn_per_min) + "/min" : "")
+              + (wt.first ? " · " + String(wt.first).slice(11,16) + "→" + String(wt.last).slice(11,16) : "")
+            : "")
+      + ". Rows outside the window are dimmed.";
+  }
+
+  el("tiles").innerHTML = [
+    ["Turns", t.turns.toLocaleString(), D.segments.length + " context(s)"],
+    ["Input", fmt(t.input), "what every turn had to be given"],
+    ["Output", fmt(t.output), "what came back"],
+    ["Peak context", fmt(t.peak_context), "fullest single turn"],
+    ["Carried", fmt(t.carried), "cost of what entered, after it entered"],
+  ].map(([k, v, n]) => `<div class="tile"><div class="k">${esc(k)}</div>
+      <div class="v num">${esc(v)}</div><div class="n">${esc(n)}</div></div>`).join("");
+
+  const rows = [];
+  if (b.tool_schemas) rows.push(["Tool schemas — all enabled connectors", b.tool_schemas]);
+  rows.push(["Skills, always-on", b.skills_always_on]);
+  rows.push(["Instruction files", b.instruction_files]);
+  rows.push(["Remainder — " + b.remainder_note, b.remainder]);
+  el("floor").innerHTML = rows.map(([k, v]) =>
+    `<tr><td>${esc(k)}</td><td class="num">${v.toLocaleString()}</td></tr>`).join("")
+    + `<tr><td><b>First turn total</b></td><td class="num"><b>${b.total.toLocaleString()}</b></td></tr>`
+    + (b.have_inventory ? "" :
+       `<tr><td colspan="2" style="color:var(--ink-3);font-size:12px">No tool inventory
+        captured, so schema size sits inside the remainder — run
+        <span class="mono">tokendog surface --refresh</span> to separate it.</td></tr>`);
+
+  if (D.segments.length > 1) {
+    el("segsec").hidden = false;
+    el("segs").innerHTML = D.segments.map(s => `<tr>
+      <td>${s.number}</td><td class="num">${s.turns.toLocaleString()}</td>
+      <td class="num">${fmt(s.first_context)}</td>
+      <td class="num">${fmt(s.peak_context)}</td>
+      <td class="num">${fmt(s.last_context)}</td>
+      <td class="num">${s.hours}</td></tr>`).join("");
+  }
+
+  // The full turn list, in time order, so row two genuinely follows row one.
+  // `top_turns` (ranked by carried) is available too and drives the "costliest
+  // first" toggle — but chronological is the default, because a drilldown is
+  // read to follow how a context grew, not to see a leaderboard.
+  const allTurns = (D.turns && D.turns.length) ? D.turns : (D.top_turns || []);
+  const maxCarried = Math.max(1, ...allTurns.map(x => x.carried || 0));
+  function renderTurns(sortKey) {
+    const rows = allTurns.slice();
+    if (sortKey === "carried") rows.sort((a, b) => (b.carried || 0) - (a.carried || 0));
+    else rows.sort((a, b) => a.index - b.index);   // chronological: index is assigned in time order
+    el("turns").innerHTML = rows.map(x => {
+      const what = (x.tools || []).map(tt =>
+        esc(tt.name) + (tt.detail ? " " + esc(tt.detail) : "")).join(" · ") || "—";
+      const w = Math.round((x.carried || 0) / maxCarried * 90);
+      const out = (x.in_window === false) ? " out" : "";
+      const reset = x.reset_before ? ' title="context reset before this turn"' : "";
+      return `<tr class="turnrow${out}"${reset}>
+        <td class="tnum">${x.index}${x.reset_before ? " ⟲" : ""}</td>
+        <td class="tnum">${esc(String(x.at).replace("T", " ").slice(5, 16))}</td>
+        <td class="num">${fmt(x.context)}</td>
+        <td class="num">${x.delta > 0 ? "+" + fmt(x.delta) : fmt(x.delta)}</td>
+        <td class="num">${(x.turns_after || 0).toLocaleString()}</td>
+        <td class="num ${x.carried >= 1e6 ? "hot" : x.carried >= 5e5 ? "warm" : ""}">${fmt(x.carried)}</td>
+        <td><span class="bar" style="width:${w}px"></span></td>
+        <td>${what}</td></tr>`;
+    }).join("");
+  }
+  renderTurns("time");
+  document.querySelectorAll(".sortbtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".sortbtn").forEach(b => b.setAttribute("aria-current", "false"));
+      btn.setAttribute("aria-current", "true");
+      renderTurns(btn.dataset.sort);
+    });
+  });
+
+  el("bytool").innerHTML = (D.by_tool || []).map(r => `<tr>
+    <td class="mono">${esc(r.tool)}</td>
+    <td class="num">${r.calls.toLocaleString()}</td>
+    <td class="num">${r.tokens.toLocaleString()}</td>
+    <td class="num ${r.carried >= 1e6 ? "hot" : ""}">${fmt(r.carried)}</td></tr>`).join("");
+
+  el("foot").innerHTML =
+    `<b>Residual across all turns: ${t.residual.toLocaleString()} tokens.</b> Growth attributable
+     to neither a tool result nor the previous reply — a typed message, an injected reminder.
+     Reported rather than assigned to whichever category happens to be nearest.
+     <br><br>
+     <b>Carried</b> is an addition's size times the turns that re-read it before the next reset.
+     Counting past a reset would bill a read to turns that never saw it. Token counts come from the
+     per-turn usage the runtime records; payload sizes are a tiktoken approximation.`;
+}
+
+function boot() {
+  try { render(); } catch (err) {
+    el("scope").textContent = "Could not render: " + ((err && err.message) || err);
+    if (window.console) console.error("tokendog session:", err);
+  }
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", boot, { once: true });
+} else { boot(); }
+</script>
+</body>
+</html>
