@@ -608,6 +608,39 @@ footer b{color:var(--ink-2);font-weight:600}
     </section>
   </div>
 
+  <div class="pane" id="pane-floor" hidden>
+    <section>
+      <h2>Context floor — what rides in every turn</h2>
+      <p class="lede">The invisible baseline: MCP tool schemas, skills' always-on frontmatter, and
+        instruction files sit in <em>every</em> request before you type. Each is re-read on every turn,
+        so its real weight is size × turns. <strong>■ reclaim</strong> = resident and never used (disable
+        it); <strong>△ trim</strong> = used but a heavy always-on block; <strong>✓ keep</strong> = earning
+        its place. MCP schema sizes need <span class="mono">tokendog surface --refresh</span> to measure.</p>
+      <div id="flsummary" class="dbanner" hidden></div>
+      <div class="tablewrap" style="margin-top:14px"><table>
+        <thead><tr><th>Item</th><th>Kind</th><th>Per turn</th><th>Used</th><th>Carried</th><th>Verdict</th><th>Detail</th></tr></thead>
+        <tbody id="flrows"><tr><td colspan="7"><span class="empty">Open this tab to build the floor budget.</span></td></tr></tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <div class="pane" id="pane-discovery" hidden>
+    <section>
+      <h2>Discovery ratio — finding vs doing</h2>
+      <p class="lede">How much of each session was read-only <strong>exploration</strong> (grep / ls /
+        find / cat, Read/Grep, git log) versus <strong>work</strong> (edits, builds, tests, commits).
+        A high ratio over many calls is the grep-loop: the model rebuilding a map of code it has no
+        memory of, one search per turn. The fix is upfront context (a <span class="mono">CLAUDE.md</span>
+        layout, a code-search tool), not fewer calls — this makes the pattern visible and movable.
+        <strong>⚠</strong> marks 20+ acting calls at 60%+ discovery.</p>
+      <div id="dvsummary" class="dbanner" hidden></div>
+      <div class="tablewrap" style="margin-top:14px"><table>
+        <thead><tr><th>Session</th><th>Project</th><th>Calls</th><th>Find</th><th>Do</th><th>greps</th><th>Discovery</th><th data-tip="Output (where the thinking budget bills) as a share of all tokens — the effort footprint. Low = context re-read is the cost, so effort level can't move it.">Gen %</th></tr></thead>
+        <tbody id="dvrows"><tr><td colspan="8"><span class="empty">Open this tab to classify tool calls.</span></td></tr></tbody>
+      </table></div>
+    </section>
+  </div>
+
   <div class="pane" id="pane-errors" hidden>
     <section>
       <h2>Tool errors — what fails, and how</h2>
@@ -1235,8 +1268,10 @@ const PANES = [
   ["recs", "Recommendations" + badge(R.filter(r => r.urgency === "now").length),
    ["pane-recs"]],
   ["cost", "Cost", ["pane-cost"]],
+  ["floor", "Floor", ["pane-floor"]],
   ["pipelines", "Pipelines", ["pane-pipelines"]],
   ["outcomes", "Outcomes", ["pane-outcomes"]],
+  ["discovery", "Discovery", ["pane-discovery"]],
   ["errors", "Tool errors", ["pane-errors"]],
   ["findings", "Findings", ["pane-findings"]],
   ["detail", "Detail", ["pane-detail"]],
@@ -1255,6 +1290,75 @@ function show(which) {
   if (which === "errors" && !errorsLoaded) loadErrors();
   if (which === "cost" && !costLoaded) loadCost();
   if (which === "pipelines" && !pipelinesLoaded) loadPipelines();
+  if (which === "discovery" && !discoveryLoaded) loadDiscovery();
+  if (which === "floor" && !floorLoaded) loadFloor();
+}
+
+/* ── floor tab (lazy — sizes the always-resident context when opened) ─── */
+let floorLoaded = false;
+function loadFloor() {
+  floorLoaded = true;
+  el("flrows").innerHTML = '<tr><td colspan="7"><span class="empty">Sizing the floor…</span></td></tr>';
+  fetch("/floor.json?range=" + encodeURIComponent(D.range || ""), { cache: "no-store" })
+    .then(r => r.json()).then(renderFloor)
+    .catch(err => { el("flrows").innerHTML = '<tr><td colspan="7"><span class="empty">could not load: '
+      + esc((err && err.message) || String(err)) + "</span></td></tr>"; });
+}
+function renderFloor(o) {
+  const t = o.totals || {};
+  const sm = el("flsummary"); sm.hidden = false;
+  const bits = ["<b>" + fmt(t.floor_known) + "</b> known floor / turn"];
+  if (t.reclaim_items) bits.push("<b>" + fmt(t.reclaimable_per_turn) + "</b> reclaimable ("
+    + t.reclaim_items + " dead)");
+  if (t.carried_wasted) bits.push(fmt(t.carried_wasted) + " already spent on dead weight");
+  if (!t.have_inventory) bits.push('<span class="mono">surface --refresh</span> to size MCP schemas');
+  sm.innerHTML = bits.join(" · ");
+  const MARK = {reclaim: ["■ reclaim", "crit"], trim: ["△ trim", "warn"], idle: ["△ idle", "warn"],
+                unmeasured: ["measure", ""], keep: ["✓ keep", "ok"], off: ["off", ""]};
+  el("flrows").innerHTML = (o.items || []).map(i => {
+    const [label, sev] = MARK[i.verdict] || [i.verdict, ""];
+    const pt = i.per_turn == null ? "—" : fmt(i.per_turn);
+    const carr = i.carried ? fmt(i.carried) : "—";
+    const vcell = sev ? '<span class="act ' + sev + '"><span class="dot"></span>' + label + "</span>" : label;
+    const ptcls = i.verdict === "reclaim" ? "hot" : (i.verdict === "trim" ? "warm" : "");
+    return '<tr><td class="mono">' + esc(i.item) + '</td><td>' + esc(i.kind)
+      + '</td><td class="num ' + ptcls + '">' + pt + '</td><td class="num">' + (i.used ? "yes" : "no")
+      + '</td><td class="num" style="color:var(--ink-3)">' + carr + '</td><td>' + vcell
+      + '</td><td>' + esc(i.detail || "") + "</td></tr>";
+  }).join("") || '<tr><td colspan="7"><span class="empty">Nothing measured in this range.</span></td></tr>';
+}
+
+/* ── discovery tab (lazy — classifies tool calls when opened) ─────────── */
+let discoveryLoaded = false;
+function loadDiscovery() {
+  discoveryLoaded = true;
+  el("dvrows").innerHTML = '<tr><td colspan="7"><span class="empty">Classifying tool calls…</span></td></tr>';
+  fetch("/discovery.json?range=" + encodeURIComponent(D.range || ""), { cache: "no-store" })
+    .then(r => r.json()).then(renderDiscovery)
+    .catch(err => { el("dvrows").innerHTML = '<tr><td colspan="7"><span class="empty">could not load: '
+      + esc((err && err.message) || String(err)) + "</span></td></tr>"; });
+}
+function renderDiscovery(o) {
+  const t = o.totals || {};
+  const sm = el("dvsummary"); sm.hidden = false;
+  sm.innerHTML = (t.sessions || 0) + " session(s) · overall <b>" + (t.overall_ratio ?? "—")
+    + "%</b> discovery · " + (t.discovery_calls || 0).toLocaleString() + " find / "
+    + (t.work_calls || 0).toLocaleString() + " do · " + (t.grep_calls || 0).toLocaleString()
+    + " greps · <b>" + (t.high_discovery_sessions || 0) + "</b> mostly exploring"
+    + (t.gen_share != null ? " · gen <b>" + t.gen_share + "%</b> of tokens (effort footprint)" : "");
+  const min = o.min_tool_calls || 20;
+  const rows = (o.sessions || []).filter(r => r.acted >= min || r.high_discovery);
+  el("dvrows").innerHTML = rows.length ? rows.map(r => {
+    const flag = r.high_discovery ? ' <span class="act crit" data-tip="20+ acting calls, 60%+ discovery — needed a map it did not have">⚠</span>' : "";
+    const cls = r.high_discovery ? "hot" : (r.discovery_ratio >= 40 ? "warm" : "");
+    const gs = r.gen_share == null ? "—" : r.gen_share + "%";
+    return '<tr><td class="mono">' + esc(r.session) + flag + '</td><td>' + esc(r.project || "—")
+      + '</td><td class="num">' + r.tool_calls.toLocaleString() + '</td><td class="num">' + r.discovery
+      + '</td><td class="num">' + r.work + '</td><td class="num">' + r.grep
+      + '</td><td class="num ' + cls + '">' + (r.discovery_ratio == null ? "—" : r.discovery_ratio + "%")
+      + '</td><td class="num" style="color:var(--ink-3)" data-tip="effort footprint — output as a share of all tokens">' + gs + "</td></tr>";
+  }).join("")
+    : '<tr><td colspan="8"><span class="empty">No sessions with enough tool calls in this range.</span></td></tr>';
 }
 
 /* ── Glitch pipelines tab (lazy — reads .glitch/runs when opened) ─────── */

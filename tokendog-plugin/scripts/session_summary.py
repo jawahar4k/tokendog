@@ -25,7 +25,21 @@ def _no_tokendog() -> int:
     return 0
 
 
+def _quiet() -> bool:
+    """Suppress the end-of-turn summary when the reader has asked for silence.
+
+    The summary is a `systemMessage` — informational, never blocking — but it
+    prints after every turn, and some readers would rather not see it. Opt out
+    with TOKENDOG_QUIET=1 (or =true/yes/on). Everything else the Stop hooks do
+    (token counting, budget alerts) is unaffected; this only mutes the line.
+    """
+    return str(os.environ.get("TOKENDOG_QUIET", "")).strip().lower() in (
+        "1", "true", "yes", "on")
+
+
 def main() -> int:
+    if _quiet():
+        return 0
     if not ensure_tokendog():
         return _no_tokendog()
     try:

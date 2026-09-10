@@ -30,6 +30,8 @@ tokendog session <id> # turn-by-turn drilldown of one session
 tokendog errors       # which tools / MCP servers fail most, and how
 tokendog outcomes     # cost per merged PR (links sessions -> commits -> PRs)
 tokendog pipelines    # Claude spend per Glitch pipeline (reads .glitch/runs)
+tokendog discovery    # finding vs doing — flags grep-loop sessions that needed a map
+tokendog floor        # context floor budget: MCPs/skills/instructions, sized + used-or-not
 ```
 
 Any turn-measuring report takes a **time range** — the tool to reach for when a limit has just

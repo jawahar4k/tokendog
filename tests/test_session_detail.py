@@ -300,13 +300,17 @@ def test_the_instant_is_kept_off_the_serialised_turn(tmp_path):
 
 
 def test_detail_does_not_publish_an_absolute_path(tmp_path):
-    """`/session/<id>.json` is explicitly meant to be handed to other tools, so
-    whatever it carries travels. An absolute transcript path carries the home
-    directory and the encoded project directory with it — the same leak
-    `transcripts.project_of` returns a basename to avoid."""
+    """`/session/<id>.json` is built to be handed to other tools, so whatever it
+    carries travels. An absolute transcript path carries the home directory and
+    the encoded project directory with it — the same leak `project_of` returns a
+    basename to avoid.
+
+    This guard has been removed once already, together with the fix, while the
+    suite stayed green. Nothing reads this field, so if it ever needs the full
+    path again, keep the path server-side rather than putting it in the payload.
+    """
     _write(tmp_path, "s1", [_resp("r1", 0, 1000)])
     d = session_detail("s1", root=tmp_path)
     assert d["found"]
     assert d["path"] == "s1.jsonl"
-    assert "/" not in d["path"]
     assert str(tmp_path) not in json.dumps(d)

@@ -464,6 +464,94 @@ def format_errors(d: dict) -> str:
     return "\n".join(lines)
 
 
+def format_floor(d: dict) -> str:
+    """The context floor budget: every always-resident item, sized, used-or-not.
+
+    Answers the question the context ledger can't: what rides in every turn
+    before you type, and which lines am I paying for and not using. A floor item
+    is re-read on every turn, so its real weight is size x turns — a small schema
+    resident for thousands of turns can outweigh a big one used once.
+    """
+    scope = f" — project `{d['project']}`" if d.get("project") else ""
+    t = d["totals"]
+    lines = [f"### TokenDog context floor{scope}", ""] + _window_lines(d)
+    if not d["items"]:
+        lines.append("_Nothing measured. The floor is MCP schemas, skills and instruction files — "
+                     "run `tokendog surface --refresh` to size connector schemas._")
+        return "\n".join(lines)
+    head = [f"{_tok(t['floor_known'])} known floor / turn"]
+    if t["reclaim_items"]:
+        head.append(f"{_tok(t['reclaimable_per_turn'])} reclaimable ({t['reclaim_items']} dead item(s))")
+    if t["carried_wasted"]:
+        head.append(f"{_tok(t['carried_wasted'])} already spent on dead weight")
+    lines.append(" · ".join(head))
+    if not t["have_inventory"]:
+        lines.append("")
+        lines.append("_MCP schema sizes are blank until measured — run `tokendog surface --refresh`._")
+    lines.append("")
+    lines.append("| Item | Kind | Per turn | Used | Carried | Verdict | |")
+    lines.append("|---|---|--:|:-:|--:|---|---|")
+    MARK = {"reclaim": "■ reclaim", "trim": "△ trim", "idle": "△ idle",
+            "unmeasured": "measure", "keep": "✓ keep", "off": "off"}
+    for i in d["items"]:
+        used = "yes" if i["used"] else "no"
+        pt = _tok(i["per_turn"]) if i["per_turn"] is not None else "—"
+        carr = _tok(i["carried"]) if i.get("carried") else "—"
+        note = i.get("detail", "")
+        lines.append(f"| `{i['item']}` | {i['kind']} | {pt} | {used} | {carr} | "
+                     f"{MARK.get(i['verdict'], i['verdict'])} | {note} |")
+    lines.append("")
+    lines.append("_Per turn = tokens this item adds to EVERY request. Carried = size x turns "
+                 "resident, what it has cost so far. `■ reclaim` = resident and never used "
+                 "(disable it / drop the skill); `△ trim` = used but a heavy always-on block; "
+                 "`✓ keep` = earning its place. Skills charge their frontmatter every turn even "
+                 "when never invoked; instruction files are always-on by design._")
+    return "\n".join(lines)
+
+
+def format_discovery(d: dict) -> str:
+    """How much of each session was FINDING vs DOING — the grep-loop flag.
+
+    A high ratio over many calls means the model rebuilt a map of the code it has
+    no memory of, one search per turn. The fix is upfront context (a CLAUDE.md
+    layout, a code-search tool), not fewer tool calls — this just makes the
+    pattern visible, and movable once you change something.
+    """
+    scope = f" — project `{d['project']}`" if d.get("project") else ""
+    t = d["totals"]
+    lines = [f"### TokenDog discovery ratio{scope}", ""] + _window_lines(d)
+    if not t["sessions"]:
+        lines.append("_No tool calls found in scope._")
+        return "\n".join(lines)
+    ov = t["overall_ratio"]
+    gen = t.get("gen_share")
+    lines.append(f"{t['sessions']:,} session(s) · overall {ov}% discovery "
+                 f"({t['discovery_calls']:,} find / {t['work_calls']:,} do, {t['grep_calls']:,} greps) · "
+                 f"{t['high_discovery_sessions']} mostly-exploring"
+                 + (f" · gen {gen}% of tokens" if gen is not None else ""))
+    lines.append("")
+    lines.append("| Session | Project | Calls | Find | Do | greps | Discovery | Gen % | |")
+    lines.append("|---|---|--:|--:|--:|--:|--:|--:|---|")
+    for r in d["sessions"][:15]:
+        if r["acted"] < d["min_tool_calls"] and not r["high_discovery"]:
+            continue
+        flag = "⚠ mostly exploring" if r["high_discovery"] else ""
+        ratio = "—" if r["discovery_ratio"] is None else f"{r['discovery_ratio']}%"
+        gs = "—" if r.get("gen_share") is None else f"{r['gen_share']}%"
+        lines.append(f"| `{r['session']}` | {r['project'] or '—'} | {r['tool_calls']:,} | "
+                     f"{r['discovery']:,} | {r['work']:,} | {r['grep']:,} | {ratio} | {gs} | {flag} |")
+    lines.append("")
+    lines.append(f"_Discovery = read-only exploration (grep/ls/find/cat, Read/Grep/Glob, git log/diff, "
+                 f"web lookups); Do = edits/writes, builds, tests, commits. Ratio is over find+do calls "
+                 f"only; delegation and MCP calls are excluded. ⚠ marks {d['min_tool_calls']}+ acting "
+                 f"calls at 60%+ discovery — a session that needed a map it did not have._")
+    lines.append(f"_`Gen %` is output (where the thinking budget bills) as a share of all tokens the "
+                 f"session touched — the effort footprint. A low number means the session is context "
+                 f"re-read, so changing the effort level cannot move its cost: the lever is less "
+                 f"context, not less thinking._")
+    return "\n".join(lines)
+
+
 def format_pipelines(d: dict) -> str:
     """Claude spend attributed to Glitch pipelines, via the run-state files.
 
@@ -931,7 +1019,7 @@ def doctor_report(cwd: str) -> str:
 # The reports whose figures are per-turn, and so can be scoped to a time range.
 # `cost` is absent on purpose: its --since/--until are dates for the SQL
 # roll-up, a different (and older) meaning of the same two flag names.
-WINDOWED_COMMANDS = ("bands", "resumes", "coldstart", "hygiene", "surface", "session", "outcomes", "errors", "pipelines")
+WINDOWED_COMMANDS = ("bands", "resumes", "coldstart", "hygiene", "surface", "session", "outcomes", "errors", "pipelines", "discovery", "floor")
 
 
 def main(argv=None) -> int:
@@ -1012,6 +1100,10 @@ def main(argv=None) -> int:
     er.add_argument("--project")
     pl = sub.add_parser("pipelines", help="Claude spend per Glitch pipeline (reads .glitch/runs)")
     pl.add_argument("--project")
+    dv = sub.add_parser("discovery", help="how much of each session was finding vs doing (grep-loop flag)")
+    dv.add_argument("--project")
+    fl = sub.add_parser("floor", help="context floor budget: MCPs/skills/instructions, sized + used-or-not")
+    fl.add_argument("--project")
     oc = sub.add_parser("outcomes", help="cost per merged PR — links sessions to commits to PRs")
     oc.add_argument("--project")
     oc.add_argument("--gh", action="store_true",
@@ -1021,7 +1113,7 @@ def main(argv=None) -> int:
                     help="attribute commits by anyone, not just this machine's git email "
                          "(default is owner-only, to avoid mis-linking a teammate's commit)")
 
-    for _p in (bd, rs, cs, hy, sf, se, oc, er, pl):
+    for _p in (bd, rs, cs, hy, sf, se, oc, er, pl, dv, fl):
         _p.add_argument("--since", metavar="WHEN",
                         help="only turns at or after this time: 17:29, 2026-09-08, "
                              "2026-09-08T17:29, or a span back from now like 90m / 3h / 2d")
@@ -1110,6 +1202,12 @@ def main(argv=None) -> int:
     elif args.cmd == "pipelines":
         from .glitch_runs import pipeline_costs
         print(format_pipelines(pipeline_costs(project=args.project, window=win)))
+    elif args.cmd == "discovery":
+        from .discovery import discovery_report
+        print(format_discovery(discovery_report(project=args.project, window=win)))
+    elif args.cmd == "floor":
+        from .floor import floor_budget
+        print(format_floor(floor_budget(project=args.project, window=win)))
     elif args.cmd == "outcomes":
         from .outcomes import outcomes_data
         print(format_outcomes(outcomes_data(project=args.project, window=win,

@@ -96,6 +96,8 @@ python -m benchmarks.run            # token-savings benchmark
 #   tokendog install-hook           # stamp session id into commits → EXACT PR attribution
 #   tokendog errors                  # which tools/MCP fail most, and how
 #   tokendog pipelines               # Claude spend per Glitch pipeline (reads .glitch/runs)
+#   tokendog discovery               # finding vs doing — flags the grep-loop sessions
+#   tokendog floor                   # context floor budget: MCPs/skills/instructions, sized + used-or-not
 #   tokendog outcomes                # cost per merged PR — links sessions→commits→PRs
 #   tokendog outcomes --gh           # resolve PRs via GitHub CLI (squash-merge repos)
 #   tokendog serve                   # all of it as a local page on 127.0.0.1:4320
@@ -115,6 +117,12 @@ python -m benchmarks.run            # token-savings benchmark
 # Optional Rust gate:
 cd tokendog-gate && cargo test
 ```
+
+## Environment toggles
+
+- `TOKENDOG_QUIET=1` — silence the end-of-turn spend summary (the `Stop says: TokenDog…` line). Token counting and budget alerts still run; only the message is muted.
+- `TOKENDOG_STATUSLINE_FLOOR=0` — hide the **baseline** segment (on by default): the always-on tokens (MCP schemas + skills + instructions, by size) to the statusline. Off by default. Note: the live ctx figure can't be split by source — Claude Code's statusline payload doesn't carry that — so this shows the fixed baseline, not a slice of the total. Use `tokendog floor` for the full itemised budget.
+- `TOKENDOG_OBSERVE_ONLY=1` — the budget hook never denies a tool call, only watches.
 
 ## Dashboard
 

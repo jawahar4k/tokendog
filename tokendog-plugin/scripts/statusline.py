@@ -119,6 +119,82 @@ def occupancy(payload: dict) -> int | None:
     return None
 
 
+def floor_segment() -> str | None:
+    """The always-on floor (MCP schemas + skills + instructions), by size.
+
+    ON by default; set TOKENDOG_STATUSLINE_FLOOR=0 (or off/no) to hide it. It is
+    the "baseline" — the tokens loaded into the window before you type anything:
+    every enabled MCP's tool schemas, each skill's always-on header, the
+    instruction files. A fixed, static cost paid on every turn. It is shown apart
+    from the ctx figure on purpose: ctx is dominated by conversation history, and
+    Claude Code's payload carries NO per-source breakdown of that, so the
+    baseline is the one honest source split the statusline can show.
+
+    Cheap on the hot path: the result is cached to disk and only recomputed when
+    the config/skills change (mtime fingerprint), so the per-keystroke cost is a
+    small file read. The tokendog import is guarded — if it is not importable the
+    segment is simply dropped, and the line still renders (the statusline's
+    working-without-tokendog guarantee is preserved).
+    """
+    # On by default; only an explicit off-value hides it.
+    if str(os.environ.get("TOKENDOG_STATUSLINE_FLOOR", "1")).strip().lower() in (
+            "0", "false", "no", "off"):
+        return None
+    home = os.path.expanduser("~")
+    cache_path = os.path.join(home, ".tokendog", "statusline_floor.json")
+    # Fingerprint: mtimes of the things floor size depends on. Cheap to stat.
+    fp_parts = []
+    for p in (os.path.join(home, ".claude.json"),
+              os.path.join(home, ".claude", "skills"),
+              os.path.join(home, ".claude", "CLAUDE.md"),
+              os.path.join(home, ".tokendog", "inventory.json")):
+        try:
+            fp_parts.append(str(os.stat(p).st_mtime))
+        except OSError:
+            fp_parts.append("-")
+    fp = "|".join(fp_parts)
+    sizes = None
+    try:
+        with open(cache_path, encoding="utf-8") as fh:
+            cached = json.load(fh)
+        if cached.get("fp") == fp:
+            sizes = cached.get("sizes")
+    except (OSError, ValueError):
+        pass
+    if sizes is None:
+        try:
+            from tokendog.floor import floor_sizes          # guarded: may not import
+            sizes = floor_sizes()
+        except Exception:
+            return None
+        try:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as fh:
+                json.dump({"fp": fp, "sizes": sizes}, fh)
+        except OSError:
+            pass
+    total = sizes.get("total") if isinstance(sizes, dict) else None
+    if not total:
+        return None
+
+    # A reader-friendly token count: keep one decimal under 10K so 2,335 reads as
+    # "2.3K", not "2K" — the floor numbers are small and the precision matters.
+    def fk(n: int) -> str:
+        n = int(n or 0)
+        if n < 1_000:
+            return str(n)
+        if n < 10_000:
+            return f"{n / 1_000:.1f}K"
+        return human(n)
+
+    # Show EVERY kind that is present, spelled out, so "floor 2.4K (MCP 2.3K ·
+    # skills 66)" reads at a glance. The full itemised list is `tokendog floor`.
+    NAMES = [("mcp", "MCP"), ("skill", "skills"), ("instruction", "instructions")]
+    parts = [f"{label} {fk(sizes[key])}" for key, label in NAMES if sizes.get(key)]
+    breakdown = f" ({' · '.join(parts)})" if parts else ""
+    return paint(f"baseline {fk(total)}{breakdown}", DIM)
+
+
 def limit_segment(payload: dict, key: str, label: str) -> str | None:
     pct = num(dig(payload, "rate_limits", key, "used_percentage"))
     if pct is None:
@@ -159,6 +235,11 @@ def build(payload: dict) -> str:
         seg = limit_segment(payload, key, label)
         if seg:
             segments.append(seg)
+
+    # Opt-in floor segment (the fixed always-on baseline, by size).
+    flr = floor_segment()
+    if flr:
+        segments.append(flr)
 
     spend = num(dig(payload, "cost", "total_cost_usd"))
     if spend:

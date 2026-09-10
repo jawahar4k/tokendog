@@ -143,6 +143,8 @@ class _Cache:
         self._errors_by_range: dict[str, dict] = {}
         self._cost_by_range: dict[str, dict] = {}
         self._pipelines_by_range: dict[str, dict] = {}
+        self._discovery_by_range: dict[str, dict] = {}
+        self._floor_by_range: dict[str, dict] = {}
         self.data: dict | None = None
         self.built_ms: int = 0
 
@@ -165,6 +167,38 @@ class _Cache:
             self._cost_by_range[token] = data
             self._stamp[("cost", token)] = fp
         return self._cost_by_range[token]
+
+    def floor(self, token: str, *, refresh: bool = False) -> dict:
+        from .floor import floor_budget
+        from .window import Window
+        token = clamp_range(token or DEFAULT_RANGE)
+        fp = self._fingerprint()
+        if refresh or self._stamp.get(("floor", token)) != fp:
+            since, until, _days, _label = window_for(token)
+            win = Window(since=since, until=until) if (since or until) else None
+            start = time.monotonic()
+            data = floor_budget(self.transcript_root, window=win)
+            data["build_ms"] = int((time.monotonic() - start) * 1000)
+            data["range"] = token
+            self._floor_by_range[token] = data
+            self._stamp[("floor", token)] = fp
+        return self._floor_by_range[token]
+
+    def discovery(self, token: str, *, refresh: bool = False) -> dict:
+        from .discovery import discovery_report
+        from .window import Window
+        token = clamp_range(token or DEFAULT_RANGE)
+        fp = self._fingerprint()
+        if refresh or self._stamp.get(("discovery", token)) != fp:
+            since, until, _days, _label = window_for(token)
+            win = Window(since=since, until=until) if (since or until) else None
+            start = time.monotonic()
+            data = discovery_report(self.transcript_root, window=win)
+            data["build_ms"] = int((time.monotonic() - start) * 1000)
+            data["range"] = token
+            self._discovery_by_range[token] = data
+            self._stamp[("discovery", token)] = fp
+        return self._discovery_by_range[token]
 
     def pipelines(self, token: str, *, refresh: bool = False) -> dict:
         from .glitch_runs import pipeline_costs
@@ -272,6 +306,14 @@ def _handler(cache: _Cache, quiet: bool):
                                "text/html; charset=utf-8")
                 elif url.path == "/data.json":
                     body = json.dumps(cache.get(refresh, token), indent=1).encode("utf-8")
+                    self._send(body, "application/json; charset=utf-8")
+                elif url.path == "/floor.json":
+                    body = json.dumps(cache.floor(token, refresh=refresh),
+                                      indent=1).encode("utf-8")
+                    self._send(body, "application/json; charset=utf-8")
+                elif url.path == "/discovery.json":
+                    body = json.dumps(cache.discovery(token, refresh=refresh),
+                                      indent=1).encode("utf-8")
                     self._send(body, "application/json; charset=utf-8")
                 elif url.path == "/pipelines.json":
                     body = json.dumps(cache.pipelines(token, refresh=refresh),
