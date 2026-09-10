@@ -234,12 +234,28 @@ def load_inventory(path=None) -> dict:
     return data if isinstance(tools, dict) else {}
 
 
-def save_inventory(tools: dict, path=None) -> Path:
+def save_inventory(tools: dict, path=None, *, merge: bool = True) -> Path:
+    """Persist probed tool-schema sizes.
+
+    MERGES by default: a size once measured is kept even if a later probe could
+    not reach that server (a connector that failed to start this run, a timed-out
+    credential prompt). Replacing wholesale — the old behaviour — meant one flaky
+    re-probe erased a good measurement and the floor silently under-reported.
+    New sizes win per key; connectors absent from this run keep their prior size.
+    Pass merge=False for a clean rebuild.
+    """
     p = Path(path) if path else inventory_path()
     p.parent.mkdir(parents=True, exist_ok=True)
+    merged = dict(tools)
+    if merge:
+        try:
+            prior = load_inventory(p).get("tools", {})
+        except Exception:
+            prior = {}
+        merged = {**prior, **tools}   # new wins; prior preserved for un-reprobed servers
     p.write_text(json.dumps({
         "captured_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
-        "tools": tools,
+        "tools": merged,
     }, indent=1) + "\n", encoding="utf-8")
     return p
 

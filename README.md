@@ -3,15 +3,17 @@
 **The watchdog for your coding-agent token spend.** Measure it, then reduce it —
 org-wide, without losing output quality. Deterministic core, no ML hand-waving.
 
+<p align="center">
+  <img src="docs/img/dashboard.png" alt="TokenDog dashboard — the Overview tab: a plain-language verdict (what the window's turns cost), four headline tiles (input, output, input-per-output, sessions needing action), a ranked act-now list with one-keystroke fixes, and two charts — cost by context-window occupancy, and daily input over the range" width="900">
+</p>
+
 > Status: feature-complete across all layers (Python + Rust suites green). **Not yet released** —
 > publishing is intentionally on hold. See `docs/BUILD-HISTORY.md`.
 
 ## What it does
 
-- **Measures** token cost from authoritative usage — the per-turn `usage` your agent already
-  records — side by side, attributed by runtime / tool / model / project / team / context band.
-  Reads Claude Code transcripts (`~/.claude/projects`, override `TOKENDOG_TRANSCRIPT_ROOT`) and
-  Glitch's stop hook. Nothing is sent anywhere: every figure is computed on your machine.
+- **Measures** token cost from authoritative usage — agent transcripts and Glitch's stop hook
+  — side by side, attributed by runtime / tool / model / team / context band.
 - **Reduces** spend in the order the bill is actually incurred — **carry less** (context re-read on
   every turn), **rewrite less** (cache writes when the prefix churns), then **generate less**
   (output). Via output truncation, session hygiene, budgets + alerts, config templates, MCP-author
@@ -59,8 +61,7 @@ what the measurement half is for. Details in `docs/FEATURES.md`.
   starts, grouped by connector because that is the unit you can switch off. Names the connectors
   that are resident on every turn and never called, and the idle tools inside the ones you do use.
   `--disable` turns one off: dry run by default, backed up, reversible.
-- **Statusline** (`tokendog-plugin/scripts/statusline.py`) — window occupancy, session age and the
-  5-hour / 7-day limit percentages on screen while you work. Installed by `tokendog init`.
+- **Statusline** (`tokendog-plugin/scripts/statusline.py`) — window occupancy, the always-on **baseline** (MCP + skills, on by default), session age and the 5-hour / 7-day limit percentages, on screen while you work. Registered by `tokendog init`.
 - **`tokendog-templates/`** — drop-in `CLAUDE.md` + `settings.json` baselines (`tokendog init`), with an
   extension marker that preserves your org's customizations across updates.
 - **`tokendog-mcp-toolkit/`** — the `tokendog_mcp` package: pagination, truncation, batch-dedup, dense
@@ -79,7 +80,7 @@ python -m benchmarks.run            # token-savings benchmark
 
 # In the agent:
 #   /plugin marketplace add .        # the repo root ships .claude-plugin/marketplace.json
-#   /plugin install tokendog@tokenwise
+#   /plugin install tokendog@tokendog
 #   tokendog init                    # drop frugal CLAUDE.md + settings into your repo
 #   ... run a session ...
 #   /tokendog:cost                   # see your spend (4 buckets, not one total)
@@ -123,7 +124,9 @@ cd tokendog-gate && cargo test
 ## Environment toggles
 
 - `TOKENDOG_QUIET=1` — silence the end-of-turn spend summary (the `Stop says: TokenDog…` line). Token counting and budget alerts still run; only the message is muted.
-- `TOKENDOG_STATUSLINE_FLOOR=0` — hide the **baseline** segment (on by default): the always-on tokens (MCP schemas + skills + instructions, by size) to the statusline. Off by default. Note: the live ctx figure can't be split by source — Claude Code's statusline payload doesn't carry that — so this shows the fixed baseline, not a slice of the total. Use `tokendog floor` for the full itemised budget.
+- `TOKENDOG_STATUSLINE_FLOOR=0` — hide the **baseline** segment in the statusline (it is ON by default): the always-on tokens (MCP schemas + skills + instructions) that ride in every turn. Note: the live `ctx` figure can't be split by source — Claude Code's statusline payload doesn't carry that — so the baseline is the fixed cost, not a slice of the total. Use `tokendog floor` for the full itemised budget.
+- `TOKENDOG_AUTO_REFRESH=0` — stop tokendog from auto-measuring MCP schema sizes. By default a SessionStart hook runs `surface --refresh` in the BACKGROUND when the inventory is missing/stale or a connector was added — so the statusline baseline and `tokendog floor` populate with no command to remember. It never blocks the session (detached, per-connector timeout) and changes no config.
+- `TOKENDOG_ADVICE=0` — mute the once-a-day, per-project SessionStart notice that names MCP connectors never called *in this repo* and offers the reversible fix (the assistant runs it on your "yes" — you never type a command).
 - `TOKENDOG_OBSERVE_ONLY=1` — the budget hook never denies a tool call, only watches.
 
 ## Dashboard
@@ -171,7 +174,7 @@ On a box where you don't want to `pip install`, tokendog is pure standard librar
 estimate). Point `PYTHONPATH` at `src` and run the module:
 
 ```bash
-PYTHONPATH=/path/to/tokenwise/src python3 -m tokendog.report serve --port 4320
+PYTHONPATH=/path/to/tokendog/src python3 -m tokendog.report serve --port 4320
 # or a tiny launcher:
 #   export PYTHONPATH="$HOME/tokendog/src"; export TOKENDOG_HOME="$HOME/tokendog/state"
 #   python3 -m tokendog.report "$@"
@@ -187,23 +190,6 @@ attribution, install the commit hook so each commit records the session that mad
 tokendog install-hook            # in a repo; adds a prepare-commit-msg hook (reversible: --remove)
 ```
 
-## What leaves your machine
-
-Nothing. Every figure is computed locally from files your agent already wrote, and TokenDog has no
-network client. Worth knowing anyway, before you share a screenshot or hand someone a JSON export:
-
-- **Roll-ups and bands are counters only** — token counts, timestamps, models, and a project name.
-  The project name is the basename of the transcript's `cwd`, never the full path, because a full
-  path carries your home directory and often a client name with it.
-- **The session drilldown shows content.** To make an expensive call recognisable it includes a
-  short label from the tool's own input — up to 120 characters of a command, file path, prompt or
-  URL. That is genuine conversation content. It is the right trade for a tool you point at your own
-  sessions, and the wrong thing to paste into a public issue.
-- **`/session/<id>.json` is designed to be handed to other tools**, so treat it as carrying the
-  above. It reports the transcript's filename, not its path.
-- **The dashboard fetches a webfont from Google.** It is the one external request in the project;
-  the page degrades to a system font stack if it is blocked, and blocking it costs you nothing.
-
 ## Safe-by-default rollout
 
 A fresh install only **measures** (and gives conservative frugal/hygiene guidance) — it never
@@ -211,7 +197,7 @@ silently alters tool output. Adopt the one content-altering feature, truncation,
 
 ```bash
 # 1. Observe — install and work normally. Zero content alteration.
-#    /plugin marketplace add . && /plugin install tokendog@tokenwise
+#    /plugin marketplace add . && /plugin install tokendog@tokendog
 #                                        →   /tokendog:cost   (watch your spend)
 
 # 2. Measure — see what truncation WOULD cut, without changing anything:

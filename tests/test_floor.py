@@ -92,3 +92,26 @@ def test_reclaimable_totals_only_count_dead_items(tmp_path):
     dead = next(i for i in d["items"] if i["item"] == "dead")
     assert d["totals"]["reclaimable_per_turn"] == dead["per_turn"]   # live not counted
     assert d["totals"]["reclaim_items"] == 1
+
+
+def test_save_inventory_merges_not_clobbers(tmp_path):
+    """A failed re-probe must not erase a previously-measured size."""
+    from tokendog.surface import save_inventory, load_inventory
+    inv = tmp_path / "surface.json"
+    save_inventory({"mcp__a__x": 100, "mcp__a__y": 50}, inv)          # first probe
+    save_inventory({"mcp__b__z": 200}, inv)                          # later probe: only b reachable
+    tools = load_inventory(inv)["tools"]
+    assert tools == {"mcp__a__x": 100, "mcp__a__y": 50, "mcp__b__z": 200}  # a preserved
+    # explicit clean rebuild drops the old
+    save_inventory({"mcp__b__z": 200}, inv, merge=False)
+    assert load_inventory(inv)["tools"] == {"mcp__b__z": 200}
+
+
+def test_floor_sizes_empty_home_has_no_local_floor(tmp_path):
+    """Skills/instructions come from `home`; an empty home contributes none.
+    (MCP size reads the MACHINE-GLOBAL inventory, not `home`, by design — so
+    this asserts only the local, home-scoped parts.)"""
+    from tokendog.floor import floor_sizes
+    fs = floor_sizes(home=tmp_path)
+    assert fs["skill"] == 0 and fs["instruction"] == 0
+    assert set(fs) >= {"mcp", "skill", "instruction", "total", "have_inventory"}

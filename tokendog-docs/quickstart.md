@@ -4,7 +4,7 @@
 1. `pip install -e .` (the `tokendog` package)
 2. Install the plugin, in Claude Code (`claude plugin ...` works the same from a shell):
    - `/plugin marketplace add .` — the repo root ships `.claude-plugin/marketplace.json`
-   - `/plugin install tokendog@tokenwise`
+   - `/plugin install tokendog@tokendog`
 
    `install` resolves only through a marketplace, so a bare path does not work.
 3. `tokendog init` to drop frugal `CLAUDE.md` + `settings.json` into your repo
@@ -79,5 +79,5 @@ TokenDog is pure standard library (`tiktoken` is optional). On a box where you d
 install, point `PYTHONPATH` at `src`:
 
 ```bash
-PYTHONPATH=/path/to/tokenwise/src python3 -m tokendog.report serve
+PYTHONPATH=/path/to/tokendog/src python3 -m tokendog.report serve
 ```
