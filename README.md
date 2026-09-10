@@ -8,8 +8,10 @@ org-wide, without losing output quality. Deterministic core, no ML hand-waving.
 
 ## What it does
 
-- **Measures** token cost from authoritative usage — agent transcripts and Glitch's stop hook
-  — side by side, attributed by runtime / tool / model / team / context band.
+- **Measures** token cost from authoritative usage — the per-turn `usage` your agent already
+  records — side by side, attributed by runtime / tool / model / project / team / context band.
+  Reads Claude Code transcripts (`~/.claude/projects`, override `TOKENDOG_TRANSCRIPT_ROOT`) and
+  Glitch's stop hook. Nothing is sent anywhere: every figure is computed on your machine.
 - **Reduces** spend in the order the bill is actually incurred — **carry less** (context re-read on
   every turn), **rewrite less** (cache writes when the prefix churns), then **generate less**
   (output). Via output truncation, session hygiene, budgets + alerts, config templates, MCP-author
@@ -184,6 +186,23 @@ attribution, install the commit hook so each commit records the session that mad
 ```bash
 tokendog install-hook            # in a repo; adds a prepare-commit-msg hook (reversible: --remove)
 ```
+
+## What leaves your machine
+
+Nothing. Every figure is computed locally from files your agent already wrote, and TokenDog has no
+network client. Worth knowing anyway, before you share a screenshot or hand someone a JSON export:
+
+- **Roll-ups and bands are counters only** — token counts, timestamps, models, and a project name.
+  The project name is the basename of the transcript's `cwd`, never the full path, because a full
+  path carries your home directory and often a client name with it.
+- **The session drilldown shows content.** To make an expensive call recognisable it includes a
+  short label from the tool's own input — up to 120 characters of a command, file path, prompt or
+  URL. That is genuine conversation content. It is the right trade for a tool you point at your own
+  sessions, and the wrong thing to paste into a public issue.
+- **`/session/<id>.json` is designed to be handed to other tools**, so treat it as carrying the
+  above. It reports the transcript's filename, not its path.
+- **The dashboard fetches a webfont from Google.** It is the one external request in the project;
+  the page degrades to a system font stack if it is blocked, and blocking it costs you nothing.
 
 ## Safe-by-default rollout
 

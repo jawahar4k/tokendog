@@ -4,10 +4,18 @@ Guidance for coding agents working in this repo.
 
 ## What this is
 
-**TokenDog** — an open-source framework that measures and reduces coding-agent / Glitch token
-spend across a developer org (target 30–60% reduction, no quality loss). The name is a **watchdog**
-metaphor: it watches token spend and barks when budgets are exceeded. The core is **deterministic**
-(static routing, statistical compression, cache pooling, budgets) — there are no ML/"neural" claims.
+**TokenDog** — an open-source framework that measures coding-agent / Glitch token spend across a
+developer org, and surfaces the levers that reduce it. The name is a **watchdog** metaphor: it
+watches token spend and barks when budgets are exceeded. The core is **deterministic** (static
+routing, cache pooling, budgets) — there are no ML/"neural" claims.
+
+**Be honest about what it reduces.** TokenDog measures precisely; it does not automatically save
+tokens. Truncation is the only deterministic reducer and it ships **off**. The frugal and hygiene
+skills are advisory and non-deterministic — measured on real transcripts they showed no effect on
+tool-payload volume. The large levers the data actually supports are model routing (Sonnet is ~40%
+cheaper than Opus across all four buckets) and session structure (a turn past #100 costs ~3x a turn
+in the first ten), and both require someone to act on the measurement. Do not restore a headline
+percentage-reduction claim unless `tokendog effect` can demonstrate it.
 
 Design brief: `compact-DESIGN.md` (the original 47-item framework; "compact" was a placeholder name).
 Build history + decisions: `docs/BUILD-HISTORY.md`. Per-slice specs/plans: `docs/superpowers/`.
