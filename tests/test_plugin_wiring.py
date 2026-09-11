@@ -127,3 +127,18 @@ def test_dependency_pin_allows_mcp_2():
     pyproject = (REPO / "pyproject.toml").read_text()
     line = next(l for l in pyproject.splitlines() if l.startswith("dependencies"))
     assert "mcp>=1.2" in line and "<2" not in line
+
+
+def test_the_two_manifests_declare_the_same_version():
+    """`claude plugin update` compares versions, so a stale one is unshippable.
+
+    The installed copy is a snapshot keyed by version: if plugin.json still says
+    what the marketplace says, `claude plugin update` reports "already at the
+    latest version" and the fix never reaches anyone. `claude plugin tag` rejects
+    a mismatch between the two files for the same reason.
+    """
+    plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    market = json.loads((REPO / ".claude-plugin" / "marketplace.json").read_text())
+    entries = [p for p in market["plugins"] if p["name"] == plugin["name"]]
+    assert entries, "the marketplace does not list this plugin"
+    assert entries[0]["version"] == plugin["version"]

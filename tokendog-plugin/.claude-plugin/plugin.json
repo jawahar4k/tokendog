@@ -1,7 +1,7 @@
 {
   "name": "tokendog",
   "displayName": "TokenDog",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Watch and reduce Claude Code / Glitch token spend.",
   "license": "Apache-2.0",
   "commands": [
