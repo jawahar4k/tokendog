@@ -128,10 +128,30 @@ def _spawn_refresh() -> bool:
         return False
 
 
+def _write_floor_cache() -> None:
+    """Write the always-on baseline sizes where the statusline can read them.
+
+    The statusline runs under a bare `python3` that usually cannot import
+    tokendog, so it cannot compute the baseline itself — it reads this cache.
+    This hook IS tokendog-capable (via _bootstrap), so it writes it, every
+    session, cheaply (config + disk, no transcript scan). Independent of the
+    auto-refresh toggle: the baseline should show even when probing is off.
+    """
+    try:
+        from tokendog.config import tokendog_home
+        from tokendog.floor import floor_sizes
+        p = tokendog_home() / "statusline_floor.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"sizes": floor_sizes()}), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def main() -> int:
-    if _off("TOKENDOG_AUTO_REFRESH", "1"):
-        return 0
     if not ensure_tokendog():
+        return 0
+    _write_floor_cache()                       # always — the statusline baseline
+    if _off("TOKENDOG_AUTO_REFRESH", "1"):     # probing is opt-out; the cache is not
         return 0
     try:
         raw = sys.stdin.read()

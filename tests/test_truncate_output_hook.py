@@ -37,7 +37,12 @@ def test_large_output_truncated(tmp_path, monkeypatch, capsys):
     assert rc == 0
     data = json.loads(out)
     assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
-    assert "truncated" in data["hookSpecificOutput"]["updatedToolOutput"]
+    # The output is shortened (the hook now condenses — head/tail with a labeled
+    # elision — rather than dumb-truncating; either way it is smaller and carries
+    # a pointer back to the full output).
+    shortened = data["hookSpecificOutput"]["updatedToolOutput"]
+    assert len(shortened) < len(big)
+    assert "elided" in shortened or "condensed" in shortened or "truncated" in shortened
     # enforce mode records a savings entry
     from tokendog.savings import savings_summary
     s = savings_summary()

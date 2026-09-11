@@ -130,49 +130,24 @@ def floor_segment() -> str | None:
     Claude Code's payload carries NO per-source breakdown of that, so the
     baseline is the one honest source split the statusline can show.
 
-    Cheap on the hot path: the result is cached to disk and only recomputed when
-    the config/skills change (mtime fingerprint), so the per-keystroke cost is a
-    small file read. The tokendog import is guarded — if it is not importable the
-    segment is simply dropped, and the line still renders (the statusline's
-    working-without-tokendog guarantee is preserved).
+    Pure READ, no tokendog import: the statusline runs under whatever `python3`
+    is first on PATH (often /usr/bin/python3, which cannot import tokendog), so
+    it must not depend on the import. A tokendog-capable SessionStart hook writes
+    the sizes to a small JSON cache; this just reads and renders it. If the cache
+    is missing, the segment is dropped and the line still renders — the
+    statusline's works-without-tokendog guarantee is preserved.
     """
     # On by default; only an explicit off-value hides it.
     if str(os.environ.get("TOKENDOG_STATUSLINE_FLOOR", "1")).strip().lower() in (
             "0", "false", "no", "off"):
         return None
-    home = os.path.expanduser("~")
-    cache_path = os.path.join(home, ".tokendog", "statusline_floor.json")
-    # Fingerprint: mtimes of the things floor size depends on. Cheap to stat.
-    fp_parts = []
-    for p in (os.path.join(home, ".claude.json"),
-              os.path.join(home, ".claude", "skills"),
-              os.path.join(home, ".claude", "CLAUDE.md"),
-              os.path.join(home, ".tokendog", "inventory.json")):
-        try:
-            fp_parts.append(str(os.stat(p).st_mtime))
-        except OSError:
-            fp_parts.append("-")
-    fp = "|".join(fp_parts)
-    sizes = None
+    home = os.environ.get("TOKENDOG_HOME") or os.path.join(os.path.expanduser("~"), ".tokendog")
+    cache_path = os.path.join(home, "statusline_floor.json")
     try:
         with open(cache_path, encoding="utf-8") as fh:
-            cached = json.load(fh)
-        if cached.get("fp") == fp:
-            sizes = cached.get("sizes")
+            sizes = json.load(fh).get("sizes")
     except (OSError, ValueError):
-        pass
-    if sizes is None:
-        try:
-            from tokendog.floor import floor_sizes          # guarded: may not import
-            sizes = floor_sizes()
-        except Exception:
-            return None
-        try:
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            with open(cache_path, "w", encoding="utf-8") as fh:
-                json.dump({"fp": fp, "sizes": sizes}, fh)
-        except OSError:
-            pass
+        return None
     total = sizes.get("total") if isinstance(sizes, dict) else None
     if not total:
         return None
@@ -193,6 +168,40 @@ def floor_segment() -> str | None:
     parts = [f"{label} {fk(sizes[key])}" for key, label in NAMES if sizes.get(key)]
     breakdown = f" ({' · '.join(parts)})" if parts else ""
     return paint(f"baseline {fk(total)}{breakdown}", DIM)
+
+
+def savings_segment(payload: dict) -> str | None:
+    """What the condenser has saved THIS session, when it is switched on.
+
+    ON by default; set TOKENDOG_STATUSLINE_SAVINGS=0 (or off/no) to hide it. Like
+    the baseline, it is a pure cache READ (no tokendog import): a tokendog-capable
+    writer records each condense event and keeps a small per-session total in
+    `${TOKENDOG_HOME or ~/.tokendog}/statusline_savings.json`; this looks up the
+    current session and renders it. Absent until the first event — which only
+    happens once the condenser is in shadow/enforce mode — so the segment stays
+    off, and off the line, for anyone who has not turned condensing on.
+
+    This is the RECORDED saving (what actually happened), never the projection —
+    the projection is a multi-second transcript scan and has no place on a line
+    that redraws on every keystroke; it lives in the dashboard Savings tab.
+    """
+    if str(os.environ.get("TOKENDOG_STATUSLINE_SAVINGS", "1")).strip().lower() in (
+            "0", "false", "no", "off"):
+        return None
+    sid = payload.get("session_id")
+    if not sid:
+        return None
+    home = os.environ.get("TOKENDOG_HOME") or os.path.join(os.path.expanduser("~"), ".tokendog")
+    try:
+        with open(os.path.join(home, "statusline_savings.json"), encoding="utf-8") as fh:
+            sessions = json.load(fh).get("sessions") or {}
+    except (OSError, ValueError):
+        return None
+    entry = sessions.get(sid) if isinstance(sessions, dict) else None
+    saved = (entry or {}).get("saved") if isinstance(entry, dict) else None
+    if not saved:
+        return None
+    return paint(f"saved {human(saved)}", GRN)
 
 
 def limit_segment(payload: dict, key: str, label: str) -> str | None:
@@ -240,6 +249,11 @@ def build(payload: dict) -> str:
     flr = floor_segment()
     if flr:
         segments.append(flr)
+
+    # Condenser savings for this session — present only when condensing is on.
+    sv = savings_segment(payload)
+    if sv:
+        segments.append(sv)
 
     spend = num(dig(payload, "cost", "total_cost_usd"))
     if spend:

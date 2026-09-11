@@ -41,6 +41,45 @@ def record_savings(*, session_id: str | None, tool: str | None, original: str,
         }
         with savings_path().open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        _bump_statusline_cache(rec["session_id"], rec["saved_tokens"])
+    except Exception:
+        return
+
+
+def _bump_statusline_cache(session_id: str, saved: int) -> None:
+    """Keep a tiny per-session running total where the statusline can read it.
+
+    The statusline runs under a bare `python3` that cannot import tokendog and
+    must not scan the ledger on every keystroke, so — exactly like the baseline
+    cache — a tokendog-capable writer (this function, on each recorded event)
+    maintains a small JSON it just reads. Keyed by session so the line shows what
+    the condenser bought THIS session; naturally absent (segment hidden) until
+    the first event, which only happens when the condenser is switched on.
+    """
+    if saved <= 0:
+        return
+    try:
+        path = tokendog_home() / "statusline_savings.json"
+        try:
+            cache = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(cache, dict):
+                cache = {}
+        except (OSError, ValueError):
+            cache = {}
+        sessions = cache.get("sessions")
+        if not isinstance(sessions, dict):
+            sessions = {}
+        cur = sessions.get(session_id) or {"saved": 0, "events": 0}
+        cur["saved"] = int(cur.get("saved", 0)) + int(saved)
+        cur["events"] = int(cur.get("events", 0)) + 1
+        # Re-insert last so the most-recent session is newest in order.
+        sessions.pop(session_id, None)
+        sessions[session_id] = cur
+        if len(sessions) > 50:                     # bound the file
+            for k in list(sessions)[:-50]:
+                sessions.pop(k, None)
+        cache["sessions"] = sessions
+        path.write_text(json.dumps(cache, separators=(",", ":")), encoding="utf-8")
     except Exception:
         return
 

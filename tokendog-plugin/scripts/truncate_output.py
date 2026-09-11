@@ -51,6 +51,7 @@ def main() -> int:
     if mode == "off":
         return 0
     try:
+        from tokendog.condense import condense
         from tokendog.truncate import truncate_text
     except Exception:
         return 0
@@ -58,16 +59,30 @@ def main() -> int:
         out = payload.get("tool_output")
         if not isinstance(out, str) or not out:
             return 0
-        max_lines = int(os.environ.get("TOKENDOG_MAX_LINES", "200"))
         max_bytes = int(os.environ.get("TOKENDOG_MAX_BYTES", "50000"))
-        new_out, cut = truncate_text(out, max_lines=max_lines, max_bytes=max_bytes)
-        if not cut:
-            return 0
+        # Only spend a WORKER call when actually enforcing (shadow must not incur
+        # cost just to measure) and only when the worker is switched on.
+        worker_on = _truthy(os.environ.get("TOKENDOG_WORKER")) and mode == "enforce"
+        tool_name = payload.get("tool_name") or ""
+        command = (payload.get("tool_input") or {}).get("command", "") \
+            if isinstance(payload.get("tool_input"), dict) else ""
+
+        # Smart condense first (keeps the lines that matter); fall back to the
+        # plain byte/line truncation if condensing found nothing to reduce.
+        rep = condense(out, tool_name=tool_name, command=command, use_worker=worker_on)
+        if rep["reduced"]:
+            new_out, method = rep["digest"], rep["method"]
+        else:
+            max_lines = int(os.environ.get("TOKENDOG_MAX_LINES", "200"))
+            new_out, cut = truncate_text(out, max_lines=max_lines, max_bytes=max_bytes)
+            if not cut:
+                return 0
+            method = "truncate"
+
         try:
             from tokendog.savings import record_savings
             record_savings(session_id=payload.get("session_id"),
-                           tool=payload.get("tool_name"),
-                           original=out, kept=new_out, mode=mode)
+                           tool=tool_name, original=out, kept=new_out, mode=mode)
         except Exception:
             pass
         # Only enforce mode alters what the model sees; shadow just records.

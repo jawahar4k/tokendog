@@ -145,6 +145,7 @@ class _Cache:
         self._pipelines_by_range: dict[str, dict] = {}
         self._discovery_by_range: dict[str, dict] = {}
         self._floor_by_range: dict[str, dict] = {}
+        self._savings_by_range: dict[str, dict] = {}
         self.data: dict | None = None
         self.built_ms: int = 0
 
@@ -249,6 +250,22 @@ class _Cache:
             self._stamp[("outcomes", key)] = fp
         return self._outcomes[key]
 
+    def savings(self, token: str, *, refresh: bool = False) -> dict:
+        from .condense_report import savings_report
+        from .window import Window
+        token = clamp_range(token or DEFAULT_RANGE)
+        fp = self._fingerprint()
+        if refresh or self._stamp.get(("savings", token)) != fp:
+            since, until, _days, _label = window_for(token)
+            win = Window(since=since, until=until) if (since or until) else None
+            start = time.monotonic()
+            data = savings_report(self.transcript_root, window=win)
+            data["build_ms"] = int((time.monotonic() - start) * 1000)
+            data["range"] = token
+            self._savings_by_range[token] = data
+            self._stamp[("savings", token)] = fp
+        return self._savings_by_range[token]
+
     def _fingerprint(self) -> tuple:
         return transcripts_fingerprint(self._kw.get("transcript_root"))
 
@@ -325,6 +342,10 @@ def _handler(cache: _Cache, quiet: bool):
                     self._send(body, "application/json; charset=utf-8")
                 elif url.path == "/errors.json":
                     body = json.dumps(cache.errors(token, refresh=refresh),
+                                      indent=1).encode("utf-8")
+                    self._send(body, "application/json; charset=utf-8")
+                elif url.path == "/savings.json":
+                    body = json.dumps(cache.savings(token, refresh=refresh),
                                       indent=1).encode("utf-8")
                     self._send(body, "application/json; charset=utf-8")
                 elif url.path == "/outcomes.json":

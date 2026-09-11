@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from .backend import LocalSQLiteBackend, QueryFilter
 from .ingest import ingest_sink, ingest_glitch_firmware, ingest_transcripts
 from .sink import read_events
@@ -461,6 +462,22 @@ def format_errors(d: dict) -> str:
     lines.append("_⚠ marks a tool with 5+ calls failing 20%+ of the time — a pattern, not a one-off. "
                  "Categories (timeout / not-found / permission / network / rate-limit / syntax / "
                  "interrupted / nonzero-exit / other) are matched by pattern, not read by a model._")
+    return "\n".join(lines)
+
+
+def format_condense_test(d: dict) -> str:
+    r = d
+    pct = (1 - r["digest_tokens"] / r["raw_tokens"]) * 100 if r["raw_tokens"] else 0
+    lines = ["### TokenDog condense — test", ""]
+    lines.append(f"raw {r['raw_tokens']:,} tok  →  digest {r['digest_tokens']:,} tok  "
+                 f"({pct:.0f}% smaller)  ·  method: {r['method']}"
+                 + ("  ·  worker used" if r.get("worker_used") else ""))
+    if not r["reduced"]:
+        lines.append("\n_Not reduced — under the threshold, or nothing safe to drop. "
+                     "Pass --worker (needs ANTHROPIC_API_KEY / TOKENDOG_WORKER_KEY) for a semantic digest._")
+    lines.append("")
+    lines.append("--- digest preview ---")
+    lines.append(r["digest"][:1500])
     return "\n".join(lines)
 
 
@@ -957,6 +974,10 @@ def format_session(d: dict) -> str:
     return "\n".join(lines)
 
 
+def _truthy_env(name: str) -> bool:
+    return str(os.environ.get(name)).strip().lower() in ("1", "true", "yes", "on")
+
+
 def doctor_report(cwd: str) -> str:
     from .transcripts import transcript_root, known_projects
     from .sink import sink_health, retention_days, max_sink_bytes
@@ -988,10 +1009,15 @@ def doctor_report(cwd: str) -> str:
                        f"retention {retention_days()} days)")
 
     # Active-vs-off state for everything that can affect model output.
-    observe_only = str(os.environ.get("TOKENDOG_OBSERVE_ONLY")).strip().lower() in ("1", "true", "yes", "on")
+    observe_only = _truthy_env("TOKENDOG_OBSERVE_ONLY")
     trunc = os.environ.get("TOKENDOG_TRUNCATE_MODE", "off").strip().lower()
     if observe_only:
         trunc = "shadow (forced by TOKENDOG_OBSERVE_ONLY)"
+    # Name the next step, not just the state: "off" on its own leaves the reader
+    # with no idea that shadow mode measures the saving without touching output.
+    if trunc == "off":
+        trunc += " — set TOKENDOG_TRUNCATE_MODE=shadow to measure, =enforce to apply"
+    worker = "on" if _truthy_env("TOKENDOG_WORKER") else "off (deterministic tiers only)"
     try:
         from .budget import load_budget
         b = load_budget()
@@ -1011,7 +1037,8 @@ def doctor_report(cwd: str) -> str:
         "subscription there is no per-token charge, so read them as relative weight",
         f"- glitch firmware.db: {glitch_status} ({glitch})",
         "- quality-affecting features (off unless you opt in):",
-        f"    - output truncation: {trunc}",
+        f"    - tool-output condenser: {trunc}",
+        f"    - condenser worker (haiku tier): {worker}",
         f"    - budget enforcement: {budget_state}",
     ])
 
@@ -1104,6 +1131,11 @@ def main(argv=None) -> int:
     dv.add_argument("--project")
     fl = sub.add_parser("floor", help="context floor budget: MCPs/skills/instructions, sized + used-or-not")
     fl.add_argument("--project")
+    cd = sub.add_parser("condense", help="test the tool-output condenser on a file or stdin")
+    cd.add_argument("path", nargs="?", help="file to condense (default: stdin)")
+    cd.add_argument("--tool", default="Bash", help="tool name to simulate (Bash/Read/…)")
+    cd.add_argument("--command", default="", help="the command, so grep/test heuristics apply")
+    cd.add_argument("--worker", action="store_true", help="allow the Haiku worker for non-deterministic content")
     oc = sub.add_parser("outcomes", help="cost per merged PR — links sessions to commits to PRs")
     oc.add_argument("--project")
     oc.add_argument("--gh", action="store_true",
@@ -1208,6 +1240,11 @@ def main(argv=None) -> int:
     elif args.cmd == "floor":
         from .floor import floor_budget
         print(format_floor(floor_budget(project=args.project, window=win)))
+    elif args.cmd == "condense":
+        from .condense import condense
+        text = open(args.path, encoding="utf-8", errors="replace").read() if args.path else sys.stdin.read()
+        rep = condense(text, tool_name=args.tool, command=args.command, use_worker=args.worker)
+        print(format_condense_test(rep))
     elif args.cmd == "outcomes":
         from .outcomes import outcomes_data
         print(format_outcomes(outcomes_data(project=args.project, window=win,

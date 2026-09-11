@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TokenDog</title>
+<!-- Dog mark as an inline SVG data URI — no network, so it shows on the loopback
+     dashboard offline, and matches the 🐕 statusline brand mark. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐕</text></svg>">
 <!-- Display face for the wordmark, headings and headline numbers. Loopback/offline
      falls back to the system stack below, so the page never blocks on the network. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -621,6 +624,26 @@ footer b{color:var(--ink-2);font-weight:600}
         <thead><tr><th>Item</th><th>Kind</th><th>Per turn</th><th>Used</th><th>Carried</th><th>Verdict</th><th>Detail</th></tr></thead>
         <tbody id="flrows"><tr><td colspan="7"><span class="empty">Open this tab to build the floor budget.</span></td></tr></tbody>
       </table></div>
+    </section>
+  </div>
+
+  <div class="pane" id="pane-savings" hidden>
+    <section>
+      <h2>Condenser savings — shrinking tool output before it's re-read</h2>
+      <p class="lede">Big tool results — grep dumps, long Reads, test logs — get re-read on
+        <em>every</em> later turn, so a bloated result bills again and again. The condenser replaces one
+        with a digest that keeps what matters (matches, errors, head + tail) and points back to the full
+        output. <strong>Projected</strong> is what the free, deterministic condenser <em>would</em> save
+        over the large results in this range — size cut × turns re-read, a conservative floor the Haiku
+        tier only adds to. <strong>Recorded</strong> is what the hook has actually logged in
+        <span class="mono">shadow</span> / <span class="mono">enforce</span> mode — zero until you turn it
+        on with <span class="mono">TOKENDOG_TRUNCATE_MODE=shadow</span> (measures, changes nothing).</p>
+      <div class="tiles" id="svtiles"></div>
+      <div class="tablewrap" style="margin-top:20px"><table>
+        <thead><tr><th>Tool</th><th>Large results condensed</th><th>Projected tokens saved</th><th>Share</th></tr></thead>
+        <tbody id="svrows"><tr><td colspan="4"><span class="empty">Open this tab to run the condenser over this range.</span></td></tr></tbody>
+      </table></div>
+      <div id="svrec" class="dbanner" hidden style="margin-top:16px"></div>
     </section>
   </div>
 
@@ -1269,6 +1292,7 @@ const PANES = [
    ["pane-recs"]],
   ["cost", "Cost", ["pane-cost"]],
   ["floor", "Floor", ["pane-floor"]],
+  ["savings", "Savings", ["pane-savings"]],
   ["pipelines", "Pipelines", ["pane-pipelines"]],
   ["outcomes", "Outcomes", ["pane-outcomes"]],
   ["discovery", "Discovery", ["pane-discovery"]],
@@ -1292,6 +1316,7 @@ function show(which) {
   if (which === "pipelines" && !pipelinesLoaded) loadPipelines();
   if (which === "discovery" && !discoveryLoaded) loadDiscovery();
   if (which === "floor" && !floorLoaded) loadFloor();
+  if (which === "savings" && !savingsLoaded) loadSavings();
 }
 
 /* ── floor tab (lazy — sizes the always-resident context when opened) ─── */
@@ -1326,6 +1351,50 @@ function renderFloor(o) {
       + '</td><td class="num" style="color:var(--ink-3)">' + carr + '</td><td>' + vcell
       + '</td><td>' + esc(i.detail || "") + "</td></tr>";
   }).join("") || '<tr><td colspan="7"><span class="empty">Nothing measured in this range.</span></td></tr>';
+}
+
+/* ── savings tab (lazy — runs the condenser over large results when opened) ── */
+let savingsLoaded = false;
+function loadSavings() {
+  savingsLoaded = true;
+  el("svrows").innerHTML = '<tr><td colspan="4"><span class="empty">Condensing large tool results…</span></td></tr>';
+  fetch("/savings.json?range=" + encodeURIComponent(D.range || ""), { cache: "no-store" })
+    .then(r => r.json()).then(renderSavings)
+    .catch(err => { el("svrows").innerHTML = '<tr><td colspan="4"><span class="empty">could not load: '
+      + esc((err && err.message) || String(err)) + "</span></td></tr>"; });
+}
+function renderSavings(o) {
+  const p = o.projected || {}, r = o.recorded || {};
+  const total = p.saved || 0;
+  const modeStr = Object.entries(r.modes || {}).map(([m, n]) => n + " " + m).join(" · ");
+  el("svtiles").innerHTML = [
+    ["Projected saved, " + D.window_days + "d", fmt(total), "", "deterministic · re-read weighted"],
+    ["Large results condensed", (p.candidates || 0).toLocaleString(),
+     " / " + (p.results || 0).toLocaleString(), "results over threshold that shrank"],
+    ["Recorded saved", fmt(r.total_saved || 0), "",
+     (r.events || 0).toLocaleString() + " event(s) logged" + (modeStr ? " · " + modeStr : "")],
+  ].map(([k, v, unit, n]) => `<div class="tile">
+      <div class="k">${esc(k)}</div>
+      <div class="v num">${esc(v)}<span class="unit">${esc(unit)}</span></div>
+      <div class="n">${esc(n)}</div></div>`).join("");
+  const rows = Object.entries(p.by_tool || {}).sort((a, b) => (b[1].saved || 0) - (a[1].saved || 0));
+  el("svrows").innerHTML = rows.length ? rows.map(([tool, v]) => {
+    const share = total ? (v.saved / total * 100).toFixed(0) : "0";
+    const cls = total && v.saved >= total * 0.5 ? "hot" : "";
+    return '<tr><td class="mono">' + esc(tool) + '</td><td class="num">' + (v.n || 0).toLocaleString()
+      + '</td><td class="num ' + cls + '">' + fmt(v.saved || 0) + '</td><td class="num">' + share + "%</td></tr>";
+  }).join("") : '<tr><td colspan="4"><span class="empty">No large tool results to condense in this range.</span></td></tr>';
+  const rec = el("svrec"); rec.hidden = false;
+  if (r.events) {
+    rec.innerHTML = "Recorded: <b>" + fmt(r.total_saved || 0) + "</b> tokens saved across " + r.events
+      + " event(s)" + (r.pct ? " (" + r.pct.toFixed(0) + "% of processed output)" : "")
+      + (modeStr ? " · " + modeStr : "");
+  } else {
+    rec.innerHTML = "Nothing recorded yet — the hook is off. Turn on measurement with "
+      + '<span class="mono">TOKENDOG_TRUNCATE_MODE=shadow</span> (measures, changes nothing), watch this '
+      + 'number track the projection, then <span class="mono">=enforce</span> to apply. Add '
+      + '<span class="mono">TOKENDOG_WORKER=1</span> for the Haiku tier on non-deterministic output.';
+  }
 }
 
 /* ── discovery tab (lazy — classifies tool calls when opened) ─────────── */
