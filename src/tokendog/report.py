@@ -217,6 +217,84 @@ def format_savings(s: dict) -> str:
     return "\n".join(lines)
 
 
+def format_savings_report(d: dict) -> str:
+    """Projected beside recorded, because either one alone misleads.
+
+    Recorded is zero until the hook is switched on, which reads as "this does
+    nothing". Projected without recorded reads as a promise. Shown together, the
+    gap between them is exactly the work left to do.
+    """
+    p_, r = d["projected"], d["recorded"]
+    scope = []
+    if d.get("project"):
+        scope.append(f"project {d['project']}")
+    if d.get("window"):
+        scope.append(d["window"])
+    head = "### TokenDog condenser savings"
+    if scope:
+        head += " — " + ", ".join(scope)
+    lines = [head, ""]
+    lines += [
+        "| | Tokens | Basis |",
+        "|---|--:|---|",
+        f"| Projected | {p_['saved']:,} | {p_['candidates']:,} of {p_['results']:,} "
+        "results are large and reducible, weighted by later turns that re-read them |",
+        f"| Recorded | {r['total_saved']:,} | {r['events']:,} condense events actually logged |",
+    ]
+    if p_["by_tool"]:
+        lines += ["", "| Tool | Results condensed | Projected tokens saved |", "|---|--:|--:|"]
+        for tool, e in p_["by_tool"].items():
+            lines.append(f"| {tool} | {e['n']:,} | {e['saved']:,} |")
+    lines.append("")
+    if r["events"] == 0:
+        lines.append("_Projected only — the condenser is off, so nothing has been altered or logged. "
+                     "Set `TOKENDOG_TRUNCATE_MODE=shadow` to log real events without touching "
+                     "output, then `=enforce` to apply them._")
+    else:
+        modes = ", ".join(f"{k}={v}" for k, v in sorted(r["modes"].items()))
+        lines.append(f"_Recorded modes: {modes}. shadow events changed nothing; enforce events "
+                     "shortened what the model saw._")
+    lines.append("_Projected is an upper bound: it assumes every large result was worth condensing. "
+                 "Run `tokendog condense --replay` to see what it would actually drop._")
+    return "\n".join(lines)
+
+
+def format_replay(d: dict) -> str:
+    """Show the dropped lines. A savings number cannot tell you if quality survives."""
+    scope = []
+    if d.get("project"):
+        scope.append(f"project {d['project']}")
+    if d.get("window"):
+        scope.append(d["window"])
+    head = "### TokenDog condense — replay on real results"
+    if scope:
+        head += " — " + ", ".join(scope)
+    lines = [head, "",
+             f"- large results examined: {d['scanned']:,}",
+             f"- the condenser would reduce: {d['condensable']:,}",
+             ""]
+    if not d["cases"]:
+        lines.append("_Nothing in this range is large enough to condense._")
+        return "\n".join(lines)
+    lines.append("_Worst-first by tokens saved. Read the dropped lines: if you would have "
+                 "needed them, do not enforce._")
+    for i, c in enumerate(d["cases"], 1):
+        cmd = (c["command"] or "").strip().replace("\n", " ")
+        what = f"`{cmd[:100]}`" if cmd else "(no command)"
+        lines += ["", f"#### {i}. {c['tool']} {what}",
+                  f"- method: {c['method']}; {c['raw_tokens']:,} → {c['digest_tokens']:,} tokens, "
+                  f"re-read by {c['reread']} later turn(s) = {c['saved']:,} tokens saved",
+                  f"- lines not present in the digest: {c['dropped_lines']:,}"]
+        if c["dropped_sample"]:
+            lines.append("")
+            lines.append("```")
+            lines += [ln[:200] for ln in c["dropped_sample"]]
+            if c["dropped_lines"] > len(c["dropped_sample"]):
+                lines.append(f"… and {c['dropped_lines'] - len(c['dropped_sample']):,} more")
+            lines.append("```")
+    return "\n".join(lines)
+
+
 def band_report_data(transcript_root=None, project=None, *, window=None) -> dict:
     from itertools import chain
     from .bands import band_summary
@@ -1046,7 +1124,7 @@ def doctor_report(cwd: str) -> str:
 # The reports whose figures are per-turn, and so can be scoped to a time range.
 # `cost` is absent on purpose: its --since/--until are dates for the SQL
 # roll-up, a different (and older) meaning of the same two flag names.
-WINDOWED_COMMANDS = ("bands", "resumes", "coldstart", "hygiene", "surface", "session", "outcomes", "errors", "pipelines", "discovery", "floor")
+WINDOWED_COMMANDS = ("bands", "resumes", "coldstart", "hygiene", "surface", "session", "outcomes", "errors", "pipelines", "discovery", "floor", "savings", "condense")
 
 
 def main(argv=None) -> int:
@@ -1073,7 +1151,8 @@ def main(argv=None) -> int:
     a.add_argument("--session")
     a.add_argument("--project")
 
-    sub.add_parser("savings")
+    sv2 = sub.add_parser("savings", help="condenser savings: projected on this range vs recorded")
+    sv2.add_argument("--project")
 
     ef = sub.add_parser("effect")
     ef.add_argument("--split", help="YYYY-MM-DD: compare before vs on/after this date")
@@ -1136,6 +1215,11 @@ def main(argv=None) -> int:
     cd.add_argument("--tool", default="Bash", help="tool name to simulate (Bash/Read/…)")
     cd.add_argument("--command", default="", help="the command, so grep/test heuristics apply")
     cd.add_argument("--worker", action="store_true", help="allow the Haiku worker for non-deterministic content")
+    cd.add_argument("--replay", action="store_true",
+                    help="instead of one file, run over real large tool results from your "
+                         "transcripts and show what each digest would drop")
+    cd.add_argument("--limit", type=int, default=5, help="--replay: how many cases to show")
+    cd.add_argument("--project", help="--replay: restrict to one project")
     oc = sub.add_parser("outcomes", help="cost per merged PR — links sessions to commits to PRs")
     oc.add_argument("--project")
     oc.add_argument("--gh", action="store_true",
@@ -1145,7 +1229,7 @@ def main(argv=None) -> int:
                     help="attribute commits by anyone, not just this machine's git email "
                          "(default is owner-only, to avoid mis-linking a teammate's commit)")
 
-    for _p in (bd, rs, cs, hy, sf, se, oc, er, pl, dv, fl):
+    for _p in (bd, rs, cs, hy, sf, se, oc, er, pl, dv, fl, sv2, cd):
         _p.add_argument("--since", metavar="WHEN",
                         help="only turns at or after this time: 17:29, 2026-09-08, "
                              "2026-09-08T17:29, or a span back from now like 90m / 3h / 2d")
@@ -1215,8 +1299,8 @@ def main(argv=None) -> int:
     elif args.cmd == "effect":
         print(format_effect(effect_data(split=args.split, project=args.project)))
     elif args.cmd == "savings":
-        from .savings import savings_summary
-        print(format_savings(savings_summary()))
+        from .condense_report import savings_report
+        print(format_savings_report(savings_report(project=args.project, window=win)))
     elif args.cmd == "bands":
         print(format_bands(band_report_data(project=args.project, window=win)))
     elif args.cmd == "resumes":
@@ -1241,6 +1325,11 @@ def main(argv=None) -> int:
         from .floor import floor_budget
         print(format_floor(floor_budget(project=args.project, window=win)))
     elif args.cmd == "condense":
+        if args.replay:
+            from .condense_report import replay
+            print(format_replay(replay(project=args.project, window=win,
+                                       limit=args.limit)))
+            return 0
         from .condense import condense
         text = open(args.path, encoding="utf-8", errors="replace").read() if args.path else sys.stdin.read()
         rep = condense(text, tool_name=args.tool, command=args.command, use_worker=args.worker)

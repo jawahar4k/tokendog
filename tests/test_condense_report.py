@@ -58,3 +58,57 @@ def test_result_text_joins_content_blocks():
     assert _result_text([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]) == "a\nb"
     assert _result_text("plain") == "plain"
     assert _result_text(None) == ""
+
+
+# --- replay: the quality check --------------------------------------------
+
+
+def _write_transcript(root, *payloads):
+    """One session: each payload is a Bash grep result, followed by later turns
+    that re-read them (so the re-read weight is non-zero)."""
+    proj = root / "projects" / "-Users-x-projects-demo"
+    proj.mkdir(parents=True, exist_ok=True)
+    recs = [{"cwd": "/Users/x/projects/demo"}]
+    uses = [(f"t{i}", "Bash", "grep -rn TODO src/") for i in range(len(payloads))]
+    recs.append(_turn("2026-01-01T00:00:00Z", 1000, uses))
+    for (tid, _, _), text in zip(uses, payloads):
+        recs.append(_result(tid, text))
+    for i in range(1, 6):
+        recs.append(_turn(f"2026-01-01T00:0{i}:00Z", 1000 + i * 500, []))
+    _write(proj / "s1.jsonl", recs)
+    return root / "projects"
+
+
+
+def test_dropped_lines_reports_what_the_digest_lost():
+    from tokendog.condense_report import dropped_lines
+    raw = "keep1\nlose1\nlose2\nkeep2"
+    assert dropped_lines(raw, "keep1\nkeep2") == ["lose1", "lose2"]
+
+
+def test_dropped_lines_is_empty_when_nothing_went_missing():
+    from tokendog.condense_report import dropped_lines
+    assert dropped_lines("a\nb", "a\nb\n… [footer]") == []
+
+
+def test_replay_returns_real_cases_worst_first(tmp_path):
+    """A savings total cannot show whether the dropped lines mattered; this can."""
+    from tokendog.condense_report import replay
+    big = "\n".join(f"line {i} of a long log" for i in range(900))
+    small = "\n".join(f"row {i}" for i in range(400))
+    root = _write_transcript(tmp_path, big, small)
+
+    out = replay(root, limit=5)
+    assert out["condensable"] >= 1
+    c = out["cases"][0]
+    assert c["digest_tokens"] < c["raw_tokens"]
+    assert c["dropped_lines"] > 0
+    assert c["dropped_sample"], "a case with nothing to show is not reviewable"
+    saved = [x["saved"] for x in out["cases"]]
+    assert saved == sorted(saved, reverse=True)
+
+
+def test_replay_limit_is_respected(tmp_path):
+    from tokendog.condense_report import replay
+    root = _write_transcript(tmp_path, *["\n".join(f"line {i}" for i in range(900))] * 3)
+    assert len(replay(root, limit=1)["cases"]) == 1

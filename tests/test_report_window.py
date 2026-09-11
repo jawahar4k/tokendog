@@ -59,7 +59,8 @@ def test_rates_are_shown_per_minute(rate, text):
 
 def test_every_turn_measuring_report_takes_a_window():
     assert set(WINDOWED_COMMANDS) == {
-        "bands", "resumes", "coldstart", "hygiene", "surface", "session", "outcomes", "errors", "pipelines", "discovery", "floor"}
+        "bands", "resumes", "coldstart", "hygiene", "surface", "session", "outcomes", "errors",
+        "pipelines", "discovery", "floor", "savings", "condense"}
 
 
 def test_cost_is_not_windowed_because_its_flags_already_meant_something_else():
