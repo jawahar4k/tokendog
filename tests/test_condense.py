@@ -28,7 +28,7 @@ def test_test_output_keeps_failures():
 
 def test_generic_large_output_head_tail():
     text = "\n".join(f"line {i}" for i in range(500))
-    digest, method = deterministic_condense(text, "Bash", "cat big.log")
+    digest, method = deterministic_condense(text, "Bash", "docker logs app")
     assert method == "head-tail"
     assert "elided" in digest
     assert "line 0" in digest and "line 499" in digest
@@ -36,7 +36,7 @@ def test_generic_large_output_head_tail():
 
 def test_condense_never_grows_and_reports():
     text = "\n".join(f"line {i}" for i in range(500))
-    r = condense(text, tool_name="Bash", command="cat big.log")
+    r = condense(text, tool_name="Bash", command="npm install")
     assert r["reduced"] is True
     assert r["digest_tokens"] < r["raw_tokens"]
     assert r["method"] == "head-tail" and r["worker_used"] is False
@@ -60,5 +60,65 @@ def test_worker_not_called_without_key(monkeypatch):
 
 def test_digest_carries_a_pointer_to_full_output():
     text = "\n".join(f"line {i}" for i in range(500))
-    r = condense(text, tool_name="Bash", command="cat big.log")
+    r = condense(text, tool_name="Bash", command="npm install")
     assert "TokenDog" in r["digest"] and "lines total" in r["digest"]
+
+
+# --- a file the model asked to read is never cut in the middle -------------
+#
+# Replay over real transcripts showed 91% of head-tail's projected saving came
+# from `Read` and `cat -n path/to/file.ts`: the digest dropped the middle of a
+# source file the model had deliberately opened. Head and tail carry the story
+# of a log or a build; they carry nothing of a file. So head-tail is for command
+# output only, and a whole-file read is left alone at any size.
+
+import pytest
+
+
+@pytest.mark.parametrize("tool,command", [
+    ("Read", ""),
+    ("Bash", "cat -n packages/workers/src/reconcile/sweep.ts"),
+    ("Bash", "cat .glitch/pipeline.md"),
+    ("Bash", "sed -n 1,400p src/app.py"),
+    ("Bash", "head -300 big.log"),
+    ("Bash", "bat README.md"),
+    ("Bash", "  cat file.txt | sed 's/a/b/'"),
+    ("Bash", "cd /x/y && cat .glitch/pipeline.md"),
+    ("Bash", "for f in a.ts b.ts; do echo == $f; cat $f; done"),
+    ("Bash", "sudo cat /var/log/x.log"),
+])
+def test_a_whole_file_read_is_never_head_tailed(tool, command):
+    text = "\n".join(f"line {i}: something unique" for i in range(600))
+    digest, method = deterministic_condense(text, tool, command)
+    assert digest is None and method == ""
+
+
+@pytest.mark.parametrize("command", [
+    "docker logs app", "npm install", "cargo build", "find . -name '*.py'",
+    "git log --stat", "curl -s https://example.test/x",
+])
+def test_command_output_still_gets_head_tail(command):
+    text = "\n".join(f"line {i}" for i in range(600))
+    _, method = deterministic_condense(text, "Bash", command)
+    assert method == "head-tail"
+
+
+def test_a_file_read_mixed_with_a_grep_is_left_alone():
+    """`cat f; grep …` must not hit the grep tier: it would keep the first 80
+    lines — the file's head — and drop the actual matches."""
+    text = "\n".join(f"src/f{i}.ts:{i}: match" for i in range(300))
+    digest, method = deterministic_condense(text, "Bash", 'cat src/x.ts; echo ==; grep -n "match" src/')
+    assert digest is None and method == ""
+
+
+def test_a_pure_grep_still_condenses_as_matches():
+    text = "\n".join(f"src/f{i}.ts:{i}: match" for i in range(300))
+    _, method = deterministic_condense(text, "Bash", "grep -rn match src/")
+    assert method == "grep-matches"
+
+
+@pytest.mark.parametrize("command", ["git diff HEAD~1 -- src/", "git show abc123", "diff -u a b"])
+def test_a_diff_is_read_for_its_hunks_and_never_cut(command):
+    text = "\n".join(f"+line {i}" for i in range(600))
+    digest, method = deterministic_condense(text, "Bash", command)
+    assert digest is None and method == ""

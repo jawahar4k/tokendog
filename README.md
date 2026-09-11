@@ -4,7 +4,8 @@
 org-wide, without losing output quality. Deterministic core, no ML hand-waving.
 
 <p align="center">
-  <img src="docs/img/dashboard.png" alt="TokenDog dashboard — the Overview tab: a plain-language verdict (what the window's turns cost), four headline tiles (input, output, input-per-output, sessions needing action), a ranked act-now list with one-keystroke fixes, and two charts — cost by context-window occupancy, and daily input over the range" width="900">
+  <img src="docs/img/dashboard.png" alt="TokenDog dashboard — the Overview tab: a plain-language verdict (what the window's turns cost), four headline tiles (input, output, input-per-output, sessions needing action), and a ranked act-now list with one-keystroke fixes" width="900">
+  <br><sub>Rendered from synthetic transcripts. Project names, session ids and figures are invented.</sub>
 </p>
 
 > Status: feature-complete across all layers (Python + Rust suites green). **Not yet released** —
@@ -16,8 +17,8 @@ org-wide, without losing output quality. Deterministic core, no ML hand-waving.
   — side by side, attributed by runtime / tool / model / team / context band.
 - **Reduces** spend in the order the bill is actually incurred — **carry less** (context re-read on
   every turn), **rewrite less** (cache writes when the prefix churns), then **generate less**
-  (output). Via output truncation, session hygiene, budgets + alerts, config templates, MCP-author
-  helpers, and an optional Rust transport gate (cache pooling, dedup, compression).
+  (output). Via the tool-output condenser, session hygiene, budgets + alerts, config templates,
+  and MCP-author helpers.
 
 ### Where the money goes
 
@@ -68,8 +69,9 @@ what the measurement half is for. Details in `docs/FEATURES.md`.
   schemas, and deferred tool loading for MCP authors.
 - **`tokendog-docs/`** — mkdocs site documenting the full 47-item optimization framework.
 - **`benchmarks/`** — a reproducible token-savings harness.
-- **`tokendog-gate/`** — optional Rust transport-gate transforms (compression, canonical ordering +
-  cache-key pooling, dedup, usage capture, budgets, CCR, session persistence, Q→A cache).
+- **`tokendog-gate/`** — **experimental, unwired** Rust transport-gate transforms. No proxy exists and
+  nothing calls them; measured against a real workload they would have invalidated the prompt cache
+  and cost more than they saved. Kept as tested code for a workload where that is not true.
 
 ## Quickstart
 
@@ -117,7 +119,7 @@ python -m benchmarks.run            # token-savings benchmark
 #   Clock times and dates are LOCAL. `--since 23:50` typed at 00:10 means ten
 #   minutes ago, not a window in the future.
 
-# Optional Rust gate:
+# Experimental Rust gate (not wired to anything):
 cd tokendog-gate && cargo test
 ```
 

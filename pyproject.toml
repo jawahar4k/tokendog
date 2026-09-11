@@ -3,7 +3,24 @@ name = "tokendog"
 version = "0.1.0"
 description = "TokenDog — watch and reduce Claude Code / Glitch token spend"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+readme = "README.md"
+authors = [{ name = "The TokenDog Authors" }]
+keywords = ["claude-code", "tokens", "cost", "telemetry", "mcp", "glitch"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: System :: Monitoring",
+]
 dependencies = ["tiktoken>=0.7", "mcp>=1.2"]
 
 [project.optional-dependencies]
@@ -13,7 +30,7 @@ dev = ["pytest>=8"]
 tokendog = "tokendog.report:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

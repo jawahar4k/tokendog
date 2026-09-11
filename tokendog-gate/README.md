@@ -1,7 +1,28 @@
 # tokendog-gate
 
-The optional TokenDog transport gate. This crate provides the token-optimization **transforms**
-(all `cargo test`-covered):
+**Status: experimental, and not wired to anything.** There is no proxy; nothing in the plugin or
+the Python package calls this crate. Before wiring it, read the measurement below.
+
+## Why it is not wired
+
+The transforms here rewrite the request body. On a real agent workload that is the wrong lever:
+
+- Every metered turn already wrote to the prompt cache incrementally; write:read fell from 28.6% to
+  1.0% over a session. The cache is doing its job.
+- `compress` and `dedup` change bytes inside the cached prefix, which invalidates it. On the measured
+  workload (cache read is 56–62% of cost, at 0.1× input price) the re-write cost exceeds anything
+  the smaller body saves.
+- The 5-minute pooled `cache_key` is worse than the 1-hour TTL the host already uses: the median
+  inter-turn gap was 3 s, but 110 gaps of 5–60 min would each have rebuilt the prefix, at about $173
+  more over the sample.
+
+So for a cache-dominated workload — which every long agent session is — this crate would have cost
+money. It stays as tested code for a workload where that is not true (no caching, or short
+stateless calls). Nothing here affects what the plugin does today.
+
+## Transforms
+
+All `cargo test`-covered:
 
 - `compress::crush` — cap long arrays + truncate long strings in JSON tool payloads.
 - `caching::canonicalize` / `canonical_string` — byte-identical prefix for cache hits.

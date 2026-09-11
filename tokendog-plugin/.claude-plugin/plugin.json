@@ -3,6 +3,9 @@
   "displayName": "TokenDog",
   "version": "0.2.0",
   "description": "Watch and reduce Claude Code / Glitch token spend.",
+  "author": {
+    "name": "The TokenDog Authors"
+  },
   "license": "Apache-2.0",
   "commands": [
     "./commands/tokendog-cost.md",

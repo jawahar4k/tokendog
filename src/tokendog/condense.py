@@ -34,8 +34,44 @@ WORKER_MAX_INPUT_CHARS = 60_000     # never ship more than this to the worker
 _GREP = re.compile(r"\b(grep|rg|ag|ack|egrep|fgrep)\b", re.I)
 _TESTY = re.compile(r"\b(pytest|npm|pnpm|yarn|jest|vitest|cargo|go\s+test|tsc|"
                     r"eslint|ruff|mypy|make)\b", re.I)
+# Commands whose output IS a file. Head+tail of a log tells the story; head+tail
+# of a source file the model opened on purpose drops the part it opened it for.
+# Replay over real transcripts put 91% of head-tail's projected saving here.
+_READERS = frozenset(("cat", "bat", "nl", "head", "tail", "less", "more", "sed", "awk", "tac"))
 _FAIL = re.compile(r"(?i)\b(error|fail(ed|ure)?|exception|traceback|assert|"
                    r"warning|panic|fatal|✗|✘|denied|not found|cannot|undefined)\b")
+
+
+_SEGMENT = re.compile(r"&&|\|\||;|\||\n")
+_PREAMBLE = frozenset(("do", "then", "else", "sudo", "time", "env", "exec", "command", "(", "{"))
+
+
+def _is_file_read(tool_name: str, command: str) -> bool:
+    """A whole-file read: the Read tool, or any stage of a Bash command that is a reader.
+
+    Every segment is checked, not just the first: `cd x && cat f` and
+    `for f in …; do cat $f; done` were the shapes replay found. A pipeline like
+    `cat f | sed …` is still the file, transformed; erring toward "file" means
+    erring toward not cutting.
+    """
+    if tool_name == "Read":
+        return True
+    if tool_name != "Bash":
+        return False
+    for segment in _SEGMENT.split(command or ""):
+        words = segment.split()
+        while words and (words[0] in _PREAMBLE
+                         or ("=" in words[0] and not words[0].startswith("-"))):
+            words.pop(0)                  # `do`, `sudo`, leading VAR=value …
+        if not words:
+            continue
+        head = words[0].rsplit("/", 1)[-1]
+        if head in _READERS:
+            return True
+        # A diff is read for its hunks; the middle is not filler either.
+        if head == "diff" or (head == "git" and len(words) > 1 and words[1] in ("diff", "show")):
+            return True
+    return False
 
 
 def _footer(total_lines: int, hint: str) -> str:
@@ -59,6 +95,12 @@ def deterministic_condense(text: str, tool_name: str, command: str) -> tuple[str
     lines = text.splitlines()
     n = len(lines)
 
+    # A file the model asked to read is never cut, by any tier. This goes first
+    # because `cat f; grep …` would otherwise hit the grep tier and keep the
+    # first 80 lines — the file's head, not the matches.
+    if _is_file_read(tool_name, command):
+        return None, ""
+
     # grep/search output IS already the matches — keep the first block, count the rest.
     if tool_name == "Bash" and _GREP.search(command or ""):
         cap = 80
@@ -81,7 +123,8 @@ def deterministic_condense(text: str, tool_name: str, command: str) -> tuple[str
             if approx_tokens(digest) < approx_tokens(text):
                 return digest, "errors"
 
-    # generic large text (cat, logs, a big Read) — head + tail with the middle elided.
+    # generic large COMMAND output (a build, a log, a listing) — head + tail with
+    # the middle elided. A file read never reaches here: see the top of this function.
     if n > 220:
         return _head_tail(text, head=120, tail=60,
                           hint="re-run with a range/filter, or Read specific lines, for the middle"), "head-tail"

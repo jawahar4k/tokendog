@@ -4,8 +4,8 @@ Guidance for coding agents working in this repo.
 
 ## What this is
 
-**TokenDog** — an open-source framework that measures and reduces coding-agent / Glitch token
-spend across a developer org (target 30–60% reduction, no quality loss). The name is a **watchdog**
+**TokenDog** — an open-source framework that measures, and where it honestly can, reduces
+coding-agent / Glitch token spend across a developer org. The name is a **watchdog**
 metaphor: it watches token spend and barks when budgets are exceeded. The core is **deterministic**
 (static routing, statistical compression, cache pooling, budgets) — there are no ML/"neural" claims.
 
@@ -22,7 +22,7 @@ Build history + decisions: `docs/BUILD-HISTORY.md`. Per-slice specs/plans: `docs
 | `tokendog-mcp-toolkit/` | Standalone `tokendog_mcp` package: frugal helpers for MCP authors |
 | `tokendog-docs/` | mkdocs site documenting the full 47-item framework |
 | `benchmarks/` | Reproducible token-savings harness |
-| `tokendog-gate/` | Optional Rust transport-gate transforms (compression, cache pooling, dedup, usage, CCR, etc.) |
+| `tokendog-gate/` | Rust transport-gate transforms. **Experimental and unwired**: no proxy exists, nothing in the plugin calls it, and on a measured real workload its transforms would have cost money (see its README) |
 
 ## Build & test
 
