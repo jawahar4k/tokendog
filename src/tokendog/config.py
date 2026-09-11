@@ -11,8 +11,3 @@ def telemetry_dir() -> Path:
     d = tokendog_home() / "telemetry"
     d.mkdir(parents=True, exist_ok=True)
     return d
-
-def db_path() -> Path:
-    home = tokendog_home()
-    home.mkdir(parents=True, exist_ok=True)
-    return home / "cost.db"

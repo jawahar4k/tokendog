@@ -4,7 +4,6 @@ from typing import Protocol
 import sqlite3
 from .event import TokenEvent
 from .pricing import estimate_cost
-from .config import db_path
 
 _ALLOWED_GROUP = {"runtime", "user", "tool", "model", "pipeline",
                   "day", "session_id", "agent", "cluster", "source",
@@ -86,8 +85,17 @@ def event_cost(event: TokenEvent) -> float:
     )
 
 class LocalSQLiteBackend:
-    def __init__(self, path=None):
-        self._conn = sqlite3.connect(str(path) if path is not None else str(db_path()))
+    """The default `CostBackend`: SQLite, at a path the caller names.
+
+    There is no on-disk default. Every report rebuilds into `":memory:"` from
+    the transcripts and the hook sink — a full pass takes about a second, so a
+    persisted copy would buy nothing and a stale one would answer queries as
+    confidently as a correct one. Name a file if you want one; an org backend
+    that wants a shared store implements the Protocol instead.
+    """
+
+    def __init__(self, path):
+        self._conn = sqlite3.connect(str(path))
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS events (%s)" %
             ", ".join(_col_def(c) for c in _DB_COLUMNS)

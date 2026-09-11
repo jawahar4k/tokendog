@@ -115,3 +115,21 @@ def test_hook_events_still_recorded_for_attribution():
     assert row.key == "Read"
     assert row.calls == 1
     assert row.est_cost_usd == 0.0
+
+
+def test_the_backend_makes_the_caller_choose_where_data_lives():
+    """No implicit on-disk default, because nothing here wants one.
+
+    Every report rebuilds into `:memory:` from the transcripts and the sink in
+    about a second, so there is no persisted store — and a default that silently
+    named `~/.tokendog/cost.db` described a file that never existed. Worse, a
+    half-written or stale copy of it would answer queries as confidently as a
+    correct one. The caller now says "ephemeral" or names a file.
+    """
+    with pytest.raises(TypeError):
+        LocalSQLiteBackend()
+
+
+def test_config_does_not_advertise_a_cost_db_that_is_never_written():
+    import tokendog.config as config
+    assert not hasattr(config, "db_path")
