@@ -9,12 +9,12 @@ org-wide, without losing output quality. Deterministic core, no ML hand-waving.
 </p>
 
 > Status: feature-complete across all layers (Python + Rust suites green). **Not yet released** —
-> publishing is intentionally on hold. See `docs/BUILD-HISTORY.md`.
+> publishing is intentionally on hold. See `docs/history/BUILD-HISTORY.md`.
 
 ## What it does
 
-- **Measures** token cost from authoritative usage — agent transcripts and Glitch's stop hook
-  — side by side, attributed by runtime / tool / model / team / context band.
+- **Measures** token cost from authoritative usage — Claude Code transcripts (and, optionally,
+  Glitch's stop hook) — attributed by project / tool / model / entrypoint / context band.
 - **Reduces** spend in the order the bill is actually incurred — **carry less** (context re-read on
   every turn), **rewrite less** (cache writes when the prefix churns), then **generate less**
   (output). Via the tool-output condenser, session hygiene, budgets + alerts, config templates,
@@ -231,19 +231,18 @@ If nothing on the machine can import `tokendog`, the SessionStart hook says so. 
 other hook fails open and exits 0, so without that message a wrong interpreter looks exactly like
 a quiet, well-behaved plugin — one that records nothing and reports `$0.00` forever.
 
-## Works with Glitch
+## Optional: Glitch
 
-TokenDog treats Glitch as a first-class second runtime: it ingests Glitch's `firmware.db` `context_log`
-and ships a Glitch-native stop hook for authoritative counts, showing Glitch and agent spend in one
-view. It integrates with Glitch's existing memory rather than duplicating it.
+Everything above works with Claude Code alone. If you also run Glitch
+pipelines, TokenDog treats it as a second runtime: it ingests Glitch's `firmware.db` `context_log`,
+ships a Glitch-native stop hook for authoritative counts, and shows pipeline and interactive spend in
+one view. Without Glitch, the Pipelines tab and `tokendog pipelines` are simply empty.
 
 ## Docs
 
 - `CLAUDE.md` — working guidance for agents in this repo
-- `docs/BUILD-HISTORY.md` — how it was built + key decisions
-- `docs/superpowers/` — per-slice specs and plans
 - `tokendog-docs/` — the full framework (mkdocs)
-- `compact-DESIGN.md` — the original design brief
+- `docs/history/` — design brief, build history and plans, kept for provenance
 
 ## License
 

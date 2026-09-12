@@ -37,7 +37,10 @@ _TESTY = re.compile(r"\b(pytest|npm|pnpm|yarn|jest|vitest|cargo|go\s+test|tsc|"
 # Commands whose output IS a file. Head+tail of a log tells the story; head+tail
 # of a source file the model opened on purpose drops the part it opened it for.
 # Replay over real transcripts put 91% of head-tail's projected saving here.
-_READERS = frozenset(("cat", "bat", "nl", "head", "tail", "less", "more", "sed", "awk", "tac"))
+_READERS = frozenset(("cat", "bat", "nl", "less", "more", "sed", "awk", "tac"))
+# head/tail are readers only as the command itself (`head -300 f`). Piped —
+# `pytest | tail -20` — they are the model capping the output, the opposite case.
+_LEADING_READERS = _READERS | {"head", "tail"}
 _FAIL = re.compile(r"(?i)\b(error|fail(ed|ure)?|exception|traceback|assert|"
                    r"warning|panic|fatal|✗|✘|denied|not found|cannot|undefined)\b")
 
@@ -58,6 +61,7 @@ def _is_file_read(tool_name: str, command: str) -> bool:
         return True
     if tool_name != "Bash":
         return False
+    first = True
     for segment in _SEGMENT.split(command or ""):
         words = segment.split()
         while words and (words[0] in _PREAMBLE
@@ -66,8 +70,11 @@ def _is_file_read(tool_name: str, command: str) -> bool:
         if not words:
             continue
         head = words[0].rsplit("/", 1)[-1]
-        if head in _READERS:
+        if head == "cd":
+            continue                      # `cd x && cat f`: the cat is still first
+        if head in (_LEADING_READERS if first else _READERS):
             return True
+        first = False
         # A diff is read for its hunks; the middle is not filler either.
         if head == "diff" or (head == "git" and len(words) > 1 and words[1] in ("diff", "show")):
             return True

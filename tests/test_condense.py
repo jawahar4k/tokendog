@@ -96,6 +96,8 @@ def test_a_whole_file_read_is_never_head_tailed(tool, command):
 @pytest.mark.parametrize("command", [
     "docker logs app", "npm install", "cargo build", "find . -name '*.py'",
     "git log --stat", "curl -s https://example.test/x",
+    "pytest -q 2>&1 | tail -300",           # a piped tail is the model capping, not reading
+    "git status --porcelain; ls -R | head -400",
 ])
 def test_command_output_still_gets_head_tail(command):
     text = "\n".join(f"line {i}" for i in range(600))

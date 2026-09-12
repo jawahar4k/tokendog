@@ -26,8 +26,8 @@ def _turn(cwd, *, out=10, ts="2026-09-07T00:00:00+00:00"):
 
 
 def test_project_is_the_cwd_basename():
-    assert project_of({"cwd": "/Users/someone/projects/contextflow"}) == "contextflow"
-    assert project_of({"cwd": "/Users/someone/projects/contextflow/"}) == "contextflow"
+    assert project_of({"cwd": "/Users/someone/projects/acme-api"}) == "acme-api"
+    assert project_of({"cwd": "/Users/someone/projects/acme-api/"}) == "acme-api"
 
 
 def test_project_is_a_basename_not_a_path():
@@ -46,8 +46,8 @@ def test_missing_cwd_is_unknown_not_guessed():
 
 
 def test_event_carries_the_project():
-    e = event_from_record(_turn("/x/y/contextflow"))
-    assert e.project == "contextflow"
+    e = event_from_record(_turn("/x/y/acme-api"))
+    assert e.project == "acme-api"
 
 
 def test_rollup_can_group_and_filter_by_project():

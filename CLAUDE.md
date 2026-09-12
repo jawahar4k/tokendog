@@ -9,8 +9,8 @@ coding-agent / Glitch token spend across a developer org. The name is a **watchd
 metaphor: it watches token spend and barks when budgets are exceeded. The core is **deterministic**
 (static routing, statistical compression, cache pooling, budgets) — there are no ML/"neural" claims.
 
-Design brief: `compact-DESIGN.md` (the original 47-item framework; "compact" was a placeholder name).
-Build history + decisions: `docs/BUILD-HISTORY.md`. Per-slice specs/plans: `docs/superpowers/`.
+Design brief, build history and per-slice plans: `docs/history/` (provenance only; "compact" there
+was a placeholder name).
 
 ## Layers (each independently useful)
 
@@ -79,4 +79,4 @@ wiring, SQLite-backed CCR, embedding-based semantic cache, local Ollama offload,
 TokenDog is a first-class second runtime for **Glitch** as well as the coding agent. Glitch has native
 agent-lifecycle hooks whose `stop` hook exposes authoritative token counts; TokenDog ships a Glitch
 stop hook and ingests Glitch's `firmware.db` `context_log`. Integrate with Glitch's memory rather than
-duplicating it. See `docs/BUILD-HISTORY.md` for details.
+duplicating it. See `docs/history/BUILD-HISTORY.md` for details.

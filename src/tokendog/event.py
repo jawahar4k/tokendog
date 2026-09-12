@@ -66,7 +66,7 @@ class TokenEvent:
     agent: str | None = None
     cluster: str | None = None
     file: str | None = None
-    # Basename of the transcript's `cwd`, e.g. "contextflow". Basename only:
+    # Basename of the transcript's `cwd`, e.g. "acme-api". Basename only:
     # a full path leaks the home directory, and often a client name with it.
     project: str | None = None
     # Tool names invoked by THIS response, in the order they appear. A response

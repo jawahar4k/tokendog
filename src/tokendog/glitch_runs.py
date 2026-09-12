@@ -16,7 +16,7 @@ from .outcomes import session_facts
 # the join needs NO change to Glitch: read the run files, map
 # session_id -> (pipeline, run, stage), and fold in the per-session cost tokendog
 # already computes. A glitch pipeline stops being an anonymous `sdk-cli` session
-# in `contextflow` and becomes "the implement stage of chunk-embed-store, run of
+# in `acme-api` and becomes "the implement stage of chunk-embed-store, run of
 # 09-09 07:29, $X".
 #
 # WHY READ RUN FILES rather than the firmware DB: the firmware `context_log` is
