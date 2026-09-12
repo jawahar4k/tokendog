@@ -195,22 +195,25 @@ tokendog install-hook            # in a repo; adds a prepare-commit-msg hook (re
 
 ## Safe-by-default rollout
 
-A fresh install only **measures** (and gives conservative frugal/hygiene guidance) — it never
-silently alters tool output. Adopt the one content-altering feature, truncation, in three steps:
+A fresh install only **measures** — it never silently alters tool output. Adopt the one
+content-altering feature, the condenser, in three steps:
 
 ```bash
 # 1. Observe — install and work normally. Zero content alteration.
 #    /plugin marketplace add . && /plugin install tokendog@tokendog
 #                                        →   /tokendog:cost   (watch your spend)
 
-# 2. Measure — see what truncation WOULD cut, without changing anything:
+# 2. Measure — see what the condenser WOULD cut, without changing anything:
 export TOKENDOG_TRUNCATE_MODE=shadow
 #    ... run some real sessions ...
-python -m tokendog.report savings        # projected with-vs-without, per tool/session
+tokendog savings --since 7d              # projected vs recorded, per tool
+tokendog condense --replay --since 7d    # the actual lines it would drop, worst first
 
-# 3. Enforce — only if the projected cuts look safe, turn it on:
+# 3. Enforce — only if what it drops is nothing you needed:
 export TOKENDOG_TRUNCATE_MODE=enforce
 ```
+
+What is read, written and sent anywhere is listed in `SECURITY.md`.
 
 `tokendog doctor` shows the live state of every quality-affecting feature, plus sink health.
 
@@ -244,6 +247,11 @@ one view. Without Glitch, the Pipelines tab and `tokendog pipelines` are simply 
 - `CLAUDE.md` — working guidance for agents in this repo
 - `docs/` — quickstart, how it works, extending, comparison, FAQ, feature inventory (`mkdocs serve` at the root)
 
+## Author
+
+Built by [Jawahar Prasad](https://jawaharprasad.com) ([@jawahar4k](https://github.com/jawahar4k)). Issues and pull requests welcome;
+see `CONTRIBUTING.md`.
+
 ## License
 
-Apache-2.0.
+Apache-2.0. Copyright 2026 Jawahar Prasad.

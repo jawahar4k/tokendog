@@ -41,7 +41,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:
 
 ## Reporting issues
 
-Please open a GitHub issue. For security-sensitive reports, see `CODE_OF_CONDUCT.md`.
+Please open a GitHub issue. For security-sensitive reports, see `SECURITY.md`.
 
 ## License
 

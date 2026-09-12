@@ -4,9 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] — 2026-09-12
 
-Initial development is complete across all layers; a tagged release has not yet been published.
+First tagged release. Measurement is the product.
+
+### Added
+- Local dashboard (`tokendog serve`) with session drilldown, context floor, discovery ratio,
+  tool errors, pipelines, outcomes, condenser savings.
+- Intervention ledger (`tokendog effect`): did a change reduce tokens, by turn position.
+- Tool-output condenser (opt-in, off by default): deterministic tiers for grep/test/log output;
+  never cuts a file the model asked to read. `tokendog condense --replay` shows what it would drop
+  on your real transcripts.
+- Interpreter bootstrap: hooks re-exec under a Python that can import `tokendog`, so a bare
+  `python3` no longer silently records nothing.
+- Support for both `mcp` majors.
+
+### Changed
+- Cost is priced only from authoritative usage (transcripts, Glitch stop hook); hook events carry
+  payload volume and are never priced. The 5m/1h cache-write split survives ingestion.
+- Session verdicts judge the current window, not the session's age: a compacted session is not told
+  to retire.
+- Absolute paths are never published; project attribution is the `cwd` basename only.
+- The Rust gate is documented as experimental and unwired, with the measurement that says why.
+
+## [Unreleased]
 
 ### Added
 

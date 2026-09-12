@@ -1,21 +1,26 @@
 # Comparison
 
 ## vs Headroom
+
+Different jobs. Headroom compresses what the model reads, in a proxy between the agent and the API:
+AST-level code compression, reversible retrieval, a hold-out of fresh reads from the prompt cache.
+TokenDog measures what your sessions cost and tells you which ones to close; its own compression is
+a small opt-in hook.
+
 | Dimension | TokenDog | Headroom |
 |---|---|---|
-| Scope | Full-stack (plugin + templates + toolkit + optional gate) | Transport proxy only |
-| Works without a proxy | Yes (plugin alone) | No |
-| Per-user/team/workflow attribution | Yes | Partial |
-| Frugal-prompting skill | Yes | No |
-| CLAUDE.md + settings templates | Yes | No |
-| MCP author toolkit | Yes | No |
-| JSON compression / cache pooling | Gate (Slice 6+) | Yes |
-| Multi-runtime (Claude Code + Glitch) | Yes | No |
-| Governance | OSS, Apache-2.0 | Single-vendor |
+| Primary job | Measurement and session hygiene | Context compression |
+| Runs as | Plugin hooks + local CLI/dashboard | Proxy (`ANTHROPIC_BASE_URL`) |
+| Sees | Transcripts after the fact | Every request, both directions |
+| Can rewrite earlier context | No | Yes |
+| Compression | Opt-in condenser, never cuts a file read | AST, JSON, prose, reversible (CCR) |
+| Cache-aware | Prices the TTL split; no transforms | Aligns prefixes; matures reads out of cache |
+| Attribution | Project, model, entrypoint, pipeline, cost per PR | Per-request savings |
+| Cost to run | None; no LLM calls | Proxy in the critical path |
 
-**Pitch:** install TokenDog for measurable Claude Code + Glitch cost reduction without needing a proxy,
-with the option to add the gate when you're ready. TokenDog is a superset of Headroom as a product,
-and will implement the transport techniques natively for governance + co-design when the gate ships (Slice 6+).
+If your bill is large tool payloads, Headroom's approach is the right one. If it is context carried
+across long sessions — which is what one measured coding workload was — the win is in what TokenDog
+points at, and compression is a third-order effect.
 
 ## vs tuneloop
 
@@ -33,9 +38,9 @@ outcome attribution and tool-error surfacing, which TokenDog now covers determin
 | Exact attribution | Commit trailer (`install-hook`) — no LLM | LLM-enriched |
 | Needs an LLM / its own token spend | **No** — deterministic, free, instant | Yes (~$ per run) |
 | Actuator (turn a connector off) | Yes (`surface --disable`) | — |
-| Harnesses | Claude Code + Glitch | Claude Code, Codex, OpenCode, Pi |
+| Harnesses | Claude Code (Glitch optional) | Claude Code, Codex, OpenCode, Pi |
 
-**Pitch:** for the rate-limit problem, TokenDog is the better fit and adds nothing to the bill —
+For the rate-limit problem TokenDog is the closer fit and adds nothing to the bill —
 every number comes from transcripts you already have. tuneloop adds multi-harness support and
 LLM-derived qualitative themes (work type, complexity, re-steer patterns) that TokenDog deliberately
 omits, since paying tokens to analyse a token limit is the wrong trade.

@@ -26,7 +26,7 @@ almost nothing about the bill.
 re-billed on *every subsequent turn*. One read is cheap; the multiplier is the turn count, and it
 compounds silently. On Opus, carrying 1 MTok costs $0.50 per turn against $25 to generate 1 MTok
 once — so **a token you carry for 50 turns costs more than a token you generate.** Measured here:
-50.9% of turns run at ≥200k context and carry 84.4% of all context tokens. Served by output truncation
+50.9% of turns run at ≥200k context and carry 84.4% of all context tokens. Served by the opt-in condenser
 (what a turn stores is what later turns carry), `/clear` hygiene, session lifecycle, the statusline
 (occupancy on screen while you work), and `bands` / `hygiene` / `resumes` to locate where context
 accumulates and where it was carried past a reset.
@@ -145,10 +145,11 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 | `docs/` | mkdocs site and this inventory | Reference for the whole method | Reference |
 | `benchmarks/` | Reproducible token-savings harness | Prove savings claims locally | Passive |
 
-## Layer 6 — Optional Rust transport gate (`tokendog-gate/`)
+## Layer 6 — Experimental Rust transport gate (`tokendog-gate/`)
 
-Only active if you run the gate as a proxy in front of the API. Most of it targets Lever 2 —
-the 28.9% of the bill spent rewriting a prefix that did not need to change.
+**Not wired to anything.** There is no proxy; nothing in the plugin or the package calls this
+crate. Measured against a real workload, its transforms would invalidate the prompt cache and cost
+more than they save (details in `tokendog-gate/README.md`). Listed for completeness.
 
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|

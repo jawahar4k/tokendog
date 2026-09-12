@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]" -e tokendog-mcp-toolkit/py
+      - run: python -m pytest -q
+
+  rust-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path tokendog-gate/Cargo.toml
+
+  plugin-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manifests parse and agree on version
+        run: |
+          python3 - <<'PY'
+          import json
+          p = json.load(open("tokendog-plugin/.claude-plugin/plugin.json"))
+          m = json.load(open(".claude-plugin/marketplace.json"))
+          e = [x for x in m["plugins"] if x["name"] == p["name"]][0]
+          assert e["version"] == p["version"], (e["version"], p["version"])
+          print("plugin", p["version"])
+          PY

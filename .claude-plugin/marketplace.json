@@ -1,7 +1,8 @@
 {
   "name": "tokendog",
   "owner": {
-    "name": "jawahar"
+    "name": "Jawahar Prasad",
+    "url": "https://jawaharprasad.com"
   },
   "description": "TokenDog \u2014 the watchdog for Claude Code and Glitch token spend.",
   "plugins": [

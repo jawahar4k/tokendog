@@ -1,14 +1,20 @@
 # FAQ
 
-**Are the token numbers exact?** For Claude Code they're tiktoken approximations (~95%), because
-Claude Code hooks don't expose token counts. For Glitch they're authoritative (from its stop hook).
-The gate (Slice 6+) will capture exact `usage.*` for both.
+**Are the token numbers exact?** Yes for cost: every priced figure comes from the `usage` block
+Claude Code writes into each transcript turn, with the 5-minute and 1-hour cache-write buckets kept
+apart because they bill differently. Hook events carry a tiktoken estimate of tool-payload *volume*
+only, and are never priced. Dollar figures are list-price attribution, not an invoice — on a Pro or
+Max plan there is no per-token charge, so read them as relative weight.
 
 **Does it slow down my session?** Hooks are fire-and-forget and fail open — any error exits silently
 and never blocks work. The only intentional block is a hard budget deny.
 
-**Do I have to run the proxy?** No. The plugin, templates, and toolkit all work standalone. The gate
-is optional and adds the transport-layer wins.
+**Do I have to run a proxy?** No, and there is none to run. The Rust gate is experimental and not
+wired to anything; see its README for the measurement that says why.
+
+**Will it cut my token usage?** By itself, mostly no — and it says so. The measurable win is closing
+and compacting the sessions it points at, and routing to a cheaper model. The condenser is off by
+default; run `tokendog condense --replay` to see what it would drop on your own history first.
 
 **Does it work with Glitch?** Yes — twice over. Glitch pipelines spawn `claude --print`, which writes
 normal Claude Code transcripts, so their Claude spend is measured like any other session. And

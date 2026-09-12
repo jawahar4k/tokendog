@@ -4,7 +4,8 @@
   "version": "0.2.0",
   "description": "Watch and reduce Claude Code / Glitch token spend.",
   "author": {
-    "name": "The TokenDog Authors"
+    "name": "Jawahar Prasad",
+    "url": "https://jawaharprasad.com"
   },
   "license": "Apache-2.0",
   "commands": [
