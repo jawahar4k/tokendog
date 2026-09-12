@@ -70,8 +70,9 @@ Pytest resolves `src`, `tokendog-mcp-toolkit/py`, and `benchmarks` via `pyprojec
 
 ## Status
 
-Slices 1–7 are complete (Python + Rust suites green). **Not yet released** — publishing is intentionally
-on hold. Documented follow-ups (need network/a model) live in `tokendog-gate/README.md`: live HTTPS proxy
+Slices 1–7 are complete (Python + Rust suites green). Released as **0.2.0**; the plugin version in
+`tokendog-plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` must be bumped
+together for `claude plugin update` to deliver anything (a test enforces this). Documented follow-ups (need network/a model) live in `tokendog-gate/README.md`: live HTTPS proxy
 wiring, SQLite-backed CCR, embedding-based semantic cache, local Ollama offload, Anthropic Memory API.
 
 ## Glitch interop (important)

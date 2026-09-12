@@ -1,6 +1,6 @@
 [project]
 name = "tokendog"
-version = "0.1.0"
+version = "0.2.0"
 description = "TokenDog — watch and reduce Claude Code / Glitch token spend"
 requires-python = ">=3.11"
 license = "Apache-2.0"

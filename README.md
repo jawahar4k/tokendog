@@ -8,8 +8,9 @@ org-wide, without losing output quality. Deterministic core, no ML hand-waving.
   <br><sub>Rendered from synthetic transcripts. Project names, session ids and figures are invented.</sub>
 </p>
 
-> Status: feature-complete across all layers (Python + Rust suites green). **Not yet released** —
-> publishing is intentionally on hold. See `docs/history/BUILD-HISTORY.md`.
+> Status: **0.2.0**, measurement is the product. It prices what your sessions cost from
+> authoritative usage and tells you which sessions to close. The reduction features are
+> opt-in, off by default, and honest about what they measured on a real workload.
 
 ## What it does
 
