@@ -68,7 +68,7 @@ what the measurement half is for. Details in `docs/FEATURES.md`.
   extension marker that preserves your org's customizations across updates.
 - **`tokendog-mcp-toolkit/`** — the `tokendog_mcp` package: pagination, truncation, batch-dedup, dense
   schemas, and deferred tool loading for MCP authors.
-- **`tokendog-docs/`** — mkdocs site documenting the full 47-item optimization framework.
+- **`docs/`** — the mkdocs site (quickstart, how it works, extending, FAQ) and the feature inventory.
 - **`benchmarks/`** — a reproducible token-savings harness.
 - **`tokendog-gate/`** — **experimental, unwired** Rust transport-gate transforms. No proxy exists and
   nothing calls them; measured against a real workload they would have invalidated the prompt cache
@@ -242,8 +242,7 @@ one view. Without Glitch, the Pipelines tab and `tokendog pipelines` are simply 
 ## Docs
 
 - `CLAUDE.md` — working guidance for agents in this repo
-- `tokendog-docs/` — the full framework (mkdocs)
-- `docs/history/` — design brief, build history and plans, kept for provenance
+- `docs/` — quickstart, how it works, extending, comparison, FAQ, feature inventory (`mkdocs serve` at the root)
 
 ## License
 

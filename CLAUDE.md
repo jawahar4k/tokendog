@@ -9,8 +9,8 @@ coding-agent / Glitch token spend across a developer org. The name is a **watchd
 metaphor: it watches token spend and barks when budgets are exceeded. The core is **deterministic**
 (static routing, statistical compression, cache pooling, budgets) — there are no ML/"neural" claims.
 
-Design brief, build history and per-slice plans: `docs/history/` (provenance only; "compact" there
-was a placeholder name).
+The original design brief and per-slice plans are in git history before v0.2.0; they describe
+intent, not behaviour.
 
 ## Layers (each independently useful)
 
@@ -20,7 +20,7 @@ was a placeholder name).
 | `tokendog-plugin/` | Agent plugin: hooks, `tokendog-cost` MCP, frugal + hygiene skills, slash commands (`/tokendog:cost` `:doctor` `:budget` `:audit` `:init`), Glitch stop hook |
 | `tokendog-templates/` | Drop-in `CLAUDE.md` + `settings.json` baselines, mcp-hygiene, example-extension |
 | `tokendog-mcp-toolkit/` | Standalone `tokendog_mcp` package: frugal helpers for MCP authors |
-| `tokendog-docs/` | mkdocs site documenting the full 47-item framework |
+| `docs/` | mkdocs site (`mkdocs.yml` at the root) + `FEATURES.md`, the feature inventory |
 | `benchmarks/` | Reproducible token-savings harness |
 | `tokendog-gate/` | Rust transport-gate transforms. **Experimental and unwired**: no proxy exists, nothing in the plugin calls it, and on a measured real workload its transforms would have cost money (see its README) |
 
@@ -80,4 +80,4 @@ wiring, SQLite-backed CCR, embedding-based semantic cache, local Ollama offload,
 TokenDog is a first-class second runtime for **Glitch** as well as the coding agent. Glitch has native
 agent-lifecycle hooks whose `stop` hook exposes authoritative token counts; TokenDog ships a Glitch
 stop hook and ingests Glitch's `firmware.db` `context_log`. Integrate with Glitch's memory rather than
-duplicating it. See `docs/history/BUILD-HISTORY.md` for details.
+duplicating it. Details in `docs/how-it-works.md`.

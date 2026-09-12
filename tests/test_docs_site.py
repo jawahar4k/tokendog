@@ -1,8 +1,8 @@
 from pathlib import Path
-D = Path(__file__).resolve().parents[1] / "tokendog-docs"
+D = Path(__file__).resolve().parents[1] / "docs"
 
 def test_mkdocs_config_references_pages():
-    cfg = (D / "mkdocs.yml").read_text()
+    cfg = (D.parent / "mkdocs.yml").read_text()
     assert "site_name" in cfg and "TokenDog" in cfg
     for page in ("quickstart.md", "how-it-works.md", "comparison.md", "faq.md", "extending.md"):
         assert page in cfg, f"nav missing {page}"

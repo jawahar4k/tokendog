@@ -1,7 +1,7 @@
 # How TokenDog Works — The 47-Item Framework
 
 TokenDog implements a full-stack token-optimization framework covering every layer of Claude Code
-and Glitch spend: fixed prompts, variable tool outputs, prompt caching, model routing, output
+spend: fixed prompts, variable tool outputs, prompt caching, model routing, output
 discipline, observability, org-wide defaults, behavioral norms, session lifecycle, and cross-session
 memory. The 47 items below are the exhaustive list, grouped into ten categories A–J.
 

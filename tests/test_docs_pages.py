@@ -1,6 +1,6 @@
 # tests/test_docs_pages.py
 from pathlib import Path
-D = Path(__file__).resolve().parents[1] / "tokendog-docs"
+D = Path(__file__).resolve().parents[1] / "docs"
 
 def test_extending_covers_marker_and_backends():
     txt = (D / "extending.md").read_text()

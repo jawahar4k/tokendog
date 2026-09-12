@@ -142,7 +142,7 @@ messages; that requires an embedding model and is explicitly deferred (see the l
 
 | Feature | What it does | Benefit | Kind |
 |---|---|---|---|
-| `tokendog-docs/` | mkdocs site documenting the full 47-item framework | Reference for the whole method | Reference |
+| `docs/` | mkdocs site and this inventory | Reference for the whole method | Reference |
 | `benchmarks/` | Reproducible token-savings harness | Prove savings claims locally | Passive |
 
 ## Layer 6 — Optional Rust transport gate (`tokendog-gate/`)

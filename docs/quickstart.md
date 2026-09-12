@@ -13,9 +13,9 @@
 Run a session, then `/tokendog:cost` for a per-runtime/tool breakdown, or `/tokendog:doctor`
 to check the setup. Set a budget with `/tokendog:budget --set-daily 25`.
 
-TokenDog measures Claude Code and Glitch side by side, both from authoritative usage — Claude Code
-transcripts (including the `claude --print` runs Glitch pipelines spawn) and Glitch's stop hook.
-Hook events record tool-payload volume only and are never priced.
+TokenDog prices every metered turn from authoritative usage in the Claude Code transcripts,
+interactive and `claude --print` alike. Hook events record tool-payload volume only and are never
+priced. If you also run Glitch pipelines, its stop hook is a second authoritative source.
 
 ## The reports
 Every report reads your transcripts — no API key, no LLM call, nothing sent anywhere.

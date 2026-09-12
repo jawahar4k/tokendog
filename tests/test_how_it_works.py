@@ -1,6 +1,6 @@
 from pathlib import Path
 
-DOC = Path(__file__).resolve().parents[1] / "tokendog-docs" / "how-it-works.md"
+DOC = Path(__file__).resolve().parents[1] / "docs" / "how-it-works.md"
 
 
 def test_covers_all_categories_and_items():
