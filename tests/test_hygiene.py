@@ -94,10 +94,25 @@ def test_a_loaded_active_session_is_told_to_clear():
     assert (sev, action) == ("crit", "Clear and restart")
 
 
-def test_an_old_session_is_told_to_retire():
-    sev, action = classify(avg_context=50_000, last_context=50_000,
-                           span_hours=AGE_LONG_LIVED_H, idle_hours=0, resets=2)
+def test_an_old_never_reset_session_is_told_to_retire():
+    """Age is a proxy for accumulation. Without a reset, days of topics are still in the window."""
+    sev, action = classify(avg_context=50_000, last_context=150_000,
+                           span_hours=AGE_LONG_LIVED_H, idle_hours=0, resets=0)
     assert (sev, action) == ("ser", "Retire the session")
+
+
+def test_a_compacted_old_session_is_judged_on_its_window_not_its_age():
+    """Billing is per turn, on what the window holds now. A session compacted
+    back to 50K costs the same as a fresh one at 50K, whatever its birthday."""
+    sev, action = classify(avg_context=50_000, last_context=50_000,
+                           span_hours=AGE_LONG_LIVED_H * 4, idle_hours=0, resets=2)
+    assert (sev, action) == ("ok", "Healthy shape")
+
+
+def test_a_compacted_old_session_that_refilled_is_told_to_compact_not_retire():
+    sev, action = classify(avg_context=OCCUPANCY_WARN, last_context=OCCUPANCY_WARN,
+                           span_hours=AGE_LONG_LIVED_H * 4, idle_hours=0, resets=6)
+    assert action == "Compact at 120K"
 
 
 def test_a_never_reset_session_is_named_as_such():
@@ -596,3 +611,14 @@ def test_window_totals_carry_the_bucket_split():
     assert t["buckets"]["cache_read"] == 100_000
     assert t["buckets"]["write_1h"] == 50_000
     assert t["weighted_input"] == 10_000 + 100_000 + 10
+
+
+def test_long_lived_finding_is_not_raised_for_a_compacted_session():
+    """The dashboard card must agree with the verdict: compacted = judged on its window."""
+    from tokendog.hygiene import session_findings
+    kw = dict(project="p", contexts=[50_000] * 10, no_live_window=False,
+              span_hours=AGE_LONG_LIVED_H * 4, idle_hours=0, last_context=50_000,
+              avg_context=50_000)
+    kinds = lambda resets: {f["kind"] for f in session_findings("abcdef0123", resets=resets, **kw)}
+    assert "long-lived" in kinds(0)
+    assert "long-lived" not in kinds(3)

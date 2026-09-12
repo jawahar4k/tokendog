@@ -257,7 +257,11 @@ def classify(*, avg_context: int, last_context: int, span_hours: float,
         return "crit", "Close it now"
     if last_context >= OCCUPANCY_ALARM:
         return "crit", "Clear and restart"
-    if span_hours >= AGE_LONG_LIVED_H:
+    # Age is a proxy for accumulation, and only that. A session compacted back
+    # down is billed on what its window holds now, whatever its birthday; the
+    # occupancy rules below judge it. Without a reset, days of topics are
+    # still in the window and retiring is the fix.
+    if span_hours >= AGE_LONG_LIVED_H and not resets:
         return "ser", "Retire the session"
     if avg_context >= OCCUPANCY_WARN and not resets:
         return "warn", "Never reset — compact at 120K"
@@ -283,7 +287,8 @@ def session_findings(transcript: str, project: str | None, *, contexts: list[int
     out: list[dict] = []
     if excess_tokens is None:
         _, excess_tokens = excess(contexts)
-    if not no_live_window and span_hours >= AGE_LONG_LIVED_H:
+    # Same rule as `classify`: age only matters when nothing was ever reset.
+    if not no_live_window and span_hours >= AGE_LONG_LIVED_H and not resets:
         out.append({"kind": "long-lived", "session": transcript[:8],
                     "project": project, "span_hours": span_hours,
                     "avg_context": avg_context, "resets": resets})
