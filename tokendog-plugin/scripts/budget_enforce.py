@@ -27,6 +27,15 @@ def _no_tokendog() -> int:
     return 0
 
 
+def _is_budget_command(payload: dict) -> bool:
+    """True for the Bash call a `/tokendog:budget` slash command makes."""
+    if payload.get("tool_name") != "Bash":
+        return False
+    ti = payload.get("tool_input")
+    cmd = ti.get("command", "") if isinstance(ti, dict) else ""
+    return "tokendog_cli.py budget" in cmd or "tokendog.report budget" in cmd
+
+
 def main() -> int:
     if not ensure_tokendog():
         return _no_tokendog()
@@ -44,13 +53,20 @@ def main() -> int:
         from tokendog.budget import check
     except Exception:
         return 0
+    # The call that raises the cap must never be refused by the cap: once
+    # crossed, `/tokendog:budget` is itself a Bash tool call, and denying it
+    # left the only way out as hand-editing a JSON file in a terminal.
+    if _is_budget_command(payload):
+        return 0
     try:
         session_id = payload.get("session_id")
         glitch = os.path.join(os.getcwd(), ".glitch", "firmware", "firmware.db")
         result = check(session_id=session_id, glitch_db=glitch if os.path.exists(glitch) else None)
         if result["over_daily"] or result["over_session"]:
             reason = (f"TokenDog budget exceeded — today ${result['daily']:.2f}"
-                      f", session ${result['session']:.2f}. Raise it with /tokendog:budget.")
+                      f", session ${result['session']:.2f} (API list-price attribution, "
+                      f"not a charge). Raise it with /tokendog:budget --set-daily N, or set "
+                      f"TOKENDOG_OBSERVE_ONLY=1 in settings.json env to stop enforcing.")
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",

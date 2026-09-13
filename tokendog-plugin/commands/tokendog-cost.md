@@ -8,7 +8,7 @@ allowed-tools: Bash
 
 Here is the current token-spend rollup (grouped by `$ARGUMENTS`, default `runtime`):
 
-!`python -m tokendog.report cost --group-by "${ARGUMENTS:-runtime}" --glitch-db "${CLAUDE_PROJECT_DIR:-$(pwd)}/.glitch/firmware/firmware.db"`
+!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tokendog_cli.py cost --group-by "${ARGUMENTS:-runtime}" --glitch-db "${CLAUDE_PROJECT_DIR:-$(pwd)}/.glitch/firmware/firmware.db"`
 
 Present the table above to the user, including its footer.
 

@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 # TokenDog — init
 
-!`python -m tokendog.report init --target "${CLAUDE_PROJECT_DIR:-.}" "${ARGUMENTS}"`
+!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tokendog_cli.py init --target "${CLAUDE_PROJECT_DIR:-.}" "${ARGUMENTS}"`
 
 The frugal defaults are written above the `TOKENDOG_EXTENSION_MARKER`; anything below it is your
 org's and is preserved on re-run. Add `--force` to also overwrite `.claude/settings.json`.

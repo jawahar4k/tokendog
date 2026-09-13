@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 # TokenDog — effect
 
-!`python -m tokendog.report effect ${ARGUMENTS}`
+!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tokendog_cli.py effect ${ARGUMENTS}`
 
 The intervention ledger — the measurement counterpart to the recommendations. `bands`, `floor`,
 `surface` and `discovery` say what to change; this says whether the change worked.

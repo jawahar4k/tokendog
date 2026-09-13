@@ -38,3 +38,43 @@ def test_error_does_not_block(tmp_path, monkeypatch, capsys):
     mod = _load()
     monkeypatch.setattr(sys, "stdin", io.StringIO("garbage"))
     assert mod.main() == 0 and capsys.readouterr().out.strip() == ""
+
+
+def _over(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    write_event(TokenEvent(ts=today+"T00:00:00+00:00", session_id="s", runtime=RUNTIME_CLAUDE,
+                           event="assistant-turn", source=SOURCE_TRANSCRIPT,
+                           input_tokens=1_000_000, model="sonnet"))
+    budget.save_budget(budget.Budget(daily_usd=1.0))
+
+
+def test_the_budget_command_itself_is_never_denied(tmp_path, monkeypatch, capsys):
+    """A cap that refuses the call which raises it is a trap: once crossed, the
+    slash command that fixes it is itself a tool call and gets refused too."""
+    _over(tmp_path, monkeypatch)
+    mod = _load()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
+        "hook_event_name": "PreToolUse", "session_id": "s", "tool_name": "Bash",
+        "tool_input": {"command": "python3 /x/scripts/tokendog_cli.py budget --set-daily 1500"}})))
+    assert mod.main() == 0 and capsys.readouterr().out.strip() == ""
+
+
+def test_other_commands_are_still_denied_when_over(tmp_path, monkeypatch, capsys):
+    _over(tmp_path, monkeypatch)
+    mod = _load()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
+        "hook_event_name": "PreToolUse", "session_id": "s", "tool_name": "Bash",
+        "tool_input": {"command": "pytest -q"}})))
+    mod.main()
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_deny_reason_names_a_way_out_that_works(tmp_path, monkeypatch, capsys):
+    """The old reason said "raise it with /tokendog:budget" — which was also denied."""
+    _over(tmp_path, monkeypatch)
+    mod = _load()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "PreToolUse", "session_id": "s"})))
+    mod.main()
+    reason = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "/tokendog:budget" in reason and "TOKENDOG_OBSERVE_ONLY" in reason

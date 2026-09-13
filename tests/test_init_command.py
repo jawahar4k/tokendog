@@ -5,4 +5,4 @@ CMD = Path(__file__).resolve().parents[1] / "tokendog-plugin" / "commands" / "to
 
 def test_init_command_present():
     txt = CMD.read_text()
-    assert txt.startswith("---") and "tokendog.report init" in txt
+    assert txt.startswith("---") and "tokendog_cli.py init" in txt

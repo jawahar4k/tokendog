@@ -142,3 +142,19 @@ def test_the_two_manifests_declare_the_same_version():
     entries = [p for p in market["plugins"] if p["name"] == plugin["name"]]
     assert entries, "the marketplace does not list this plugin"
     assert entries[0]["version"] == plugin["version"]
+
+
+def test_slash_commands_do_not_assume_a_python_on_path():
+    """`python -m tokendog.report …` failed on a Mac with only `python3`, and
+    `python3` there could not import tokendog either. Commands go through the
+    same interpreter bootstrap the hooks use."""
+    for cmd in (ROOT / "commands").glob("*.md"):
+        src = cmd.read_text()
+        assert "!`python " not in src and "!`python3 -m tokendog" not in src, cmd.name
+        assert "${CLAUDE_PLUGIN_ROOT}/scripts/tokendog_cli.py" in src, cmd.name
+
+
+def test_cli_shim_bootstraps_before_dispatching():
+    src = (ROOT / "scripts" / "tokendog_cli.py").read_text()
+    assert "from _bootstrap import ensure_tokendog" in src
+    assert src.index("ensure_tokendog()") < src.index("from tokendog.report import")

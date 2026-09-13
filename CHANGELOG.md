@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-09-13
+
+### Fixed
+- Slash commands ran `python -m tokendog.report`, which failed on machines with only `python3`
+  and on any `python3` that could not import tokendog. They now go through the same interpreter
+  bootstrap as the hooks and say so if nothing works.
+- The budget hook denied the very call that raises the cap, leaving no way out from inside a
+  session. `/tokendog:budget` is now exempt, and the deny reason names both fixes.
+- `--set-daily $1500` is read as 1500.
+
 ## [0.2.0] — 2026-09-12
 
 First tagged release. Measurement is the product.

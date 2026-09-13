@@ -1127,6 +1127,11 @@ def doctor_report(cwd: str) -> str:
 WINDOWED_COMMANDS = ("bands", "resumes", "coldstart", "hygiene", "surface", "session", "outcomes", "errors", "pipelines", "discovery", "floor", "savings", "condense")
 
 
+def _usd(text: str) -> float:
+    """`$1,500` is what people type for a budget; read it as 1500."""
+    return float(str(text).strip().lstrip("$").replace(",", ""))
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="tokendog")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1141,9 +1146,9 @@ def main(argv=None) -> int:
     sub.add_parser("doctor")
 
     b = sub.add_parser("budget")
-    b.add_argument("--set-daily", type=float)
-    b.add_argument("--set-session", type=float)
-    b.add_argument("--set-alert", type=float)
+    b.add_argument("--set-daily", type=_usd)
+    b.add_argument("--set-session", type=_usd)
+    b.add_argument("--set-alert", type=_usd)
     b.add_argument("--set-webhook")
     b.add_argument("--show", action="store_true")
 

@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 # TokenDog — audit
 
-!`python -m tokendog.report audit ${ARGUMENTS}`
+!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tokendog_cli.py audit ${ARGUMENTS}`
 
 Review the per-tool breakdown above to see where this session's tokens went. Figures are
 local approximations for Claude Code; Glitch rows are authoritative.

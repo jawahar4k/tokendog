@@ -37,3 +37,12 @@ def test_audit_session_header_and_session_id(tmp_path, monkeypatch, capsys):
     assert "by tool" not in out
     assert "session_id" in out
     assert "sess-abc123" in out
+
+
+def test_a_dollar_sign_in_the_amount_is_accepted():
+    """`--set-daily $1500` is what people type. If the shell does not eat the `$1`
+    first, the CLI must still read it as 1500, not choke on the sign."""
+    from tokendog.report import _usd
+    assert _usd("$1500") == 1500.0
+    assert _usd("1,500") == 1500.0
+    assert _usd("25") == 25.0

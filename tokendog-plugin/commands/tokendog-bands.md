@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 # TokenDog — bands
 
-!`python -m tokendog.report bands`
+!`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tokendog_cli.py bands`
 
 Roll-ups by runtime/tool/session/model answer "who spent it". This answers "how big was the
 context when it was spent" — usually the more actionable number, because every token in a
