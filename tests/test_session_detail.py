@@ -315,3 +315,30 @@ def test_detail_does_not_publish_an_absolute_path(tmp_path):
     assert d["found"]
     assert d["path"] == "s1.jsonl"
     assert str(tmp_path) not in json.dumps(d)
+
+
+# --- grouping MCP tools under their server ------------------------------------
+
+
+def test_tool_group_names_the_connector_for_mcp_tools():
+    from tokendog.session_detail import tool_group
+    assert tool_group("mcp__github__search_code") == "github"
+    assert tool_group("mcp__plugin_context7_context7__query-docs") == "context7_context7"
+    assert tool_group("Bash") is None
+    assert tool_group("mcp__weird") is None            # no tool segment: not a group
+
+
+def test_by_tool_rows_carry_their_group(tmp_path):
+    """The drawer indents a connector's tools under one header; the row must
+    say which header, so both pages can build the same grouping."""
+    _write(tmp_path, "s1", [
+        _resp("r1", 0, 1000, tool="mcp__github__search_code"),
+        _resp("r2", 1, 1300, tool="mcp__github__get_pull_request"),
+        _resp("r3", 2, 1600, tool="Bash"),
+        _resp("r4", 3, 1900),
+    ])
+    rows = session_detail("s1", root=tmp_path)["by_tool"]
+    groups = {r["tool"]: r["group"] for r in rows}
+    assert groups["mcp__github__search_code"] == "github"
+    assert groups["mcp__github__get_pull_request"] == "github"
+    assert groups["Bash"] is None

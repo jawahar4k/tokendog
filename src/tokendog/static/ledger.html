@@ -297,7 +297,7 @@ a.drill:hover{border-bottom-style:solid}
 .scrim{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:40;opacity:0;
   transition:opacity .18s ease}
 .scrim.show{opacity:1}
-.drawer{position:fixed;top:0;right:0;height:100vh;width:min(960px,94vw);
+.drawer{position:fixed;top:0;right:0;height:100vh;width:min(1140px,96vw);
   background:var(--plane);border-left:1px solid var(--rule-2);
   box-shadow:-10px 0 40px rgba(0,0,0,.22);z-index:41;transform:translateX(100%);
   transition:transform .22s ease;overflow-y:auto;overscroll-behavior:contain}
@@ -333,7 +333,15 @@ a.drill:hover{border-bottom-style:solid}
 .sortbtn:hover{background:var(--surface-2);color:var(--ink)}
 .sortbtn[aria-current="true"]{background:var(--ink);color:var(--plane);border-color:var(--ink)}
 .dwrapt{overflow-x:auto;border:1px solid var(--rule);border-radius:3px;background:var(--surface)}
-.dbody table{border-collapse:collapse;width:100%}
+/* The dashboard's tables carry a 1080px floor so their many columns never
+   crush; the drawer's two- and four-column tables inherited it and grew a
+   scrollbar for nothing. */
+.dbody table{border-collapse:collapse;width:100%;min-width:0}
+.dbody tbody td:first-child{white-space:normal}
+.dbody tr.tgroup td{background:var(--surface-2);font-weight:600;color:var(--ink)}
+.dbody tr.tgroup td:first-child{font-family:"IBM Plex Mono",Menlo,monospace;font-size:12px}
+.dbody tr.tgroup td:first-child::before{content:"▾ ";color:var(--ink-3);font-size:10px}
+.dbody tr.tmember td:first-child{padding-left:30px;color:var(--ink-2)}
 .dbody thead th{text-align:right;font-size:10px;font-weight:600;letter-spacing:.05em;
   text-transform:uppercase;color:var(--ink-3);padding:9px 11px 8px;white-space:nowrap;
   border-bottom:1px solid var(--rule-2);background:var(--surface-2)}
@@ -994,6 +1002,11 @@ function renderDrawer() {
     + banner
     + "<h3>The floor — carried by every turn before anything is typed</h3>"
     + '<div class="dwrapt"><table><tbody>' + floor + "</tbody></table></div>"
+    + (det.by_tool && det.by_tool.length
+        ? "<h3>By tool</h3><div class=\"dwrapt\"><table><thead><tr><th>Tool</th><th>Calls</th>"
+          + "<th>Result tokens</th><th>Carried</th></tr></thead><tbody>"
+          + groupedToolRows(det.by_tool) + "</tbody></table></div>"
+        : "")
     + '<div class="h3row"><h3>Turn by turn</h3><span class="sortby">sort:'
       + '<button type="button" class="sortbtn" data-s="new">newest first</button>'
       + '<button type="button" class="sortbtn" data-s="old">oldest first</button>'
@@ -1003,14 +1016,6 @@ function renderDrawer() {
     + '<div class="dwrapt"><table><thead><tr><th>#</th><th>Time</th><th>Context</th>'
       + "<th>Added</th><th>Re-read by</th><th>Carried</th><th></th><th>What arrived</th></tr></thead>"
       + '<tbody id="dturns"></tbody></table></div>'
-    + (det.by_tool && det.by_tool.length
-        ? "<h3>By tool</h3><div class=\"dwrapt\"><table><thead><tr><th>Tool</th><th>Calls</th>"
-          + "<th>Result tokens</th><th>Carried</th></tr></thead><tbody>"
-          + det.by_tool.map(r => '<tr><td class="tnum">' + esc(r.tool) + '</td><td class="num">'
-              + r.calls.toLocaleString() + '</td><td class="num">' + r.tokens.toLocaleString()
-              + '</td><td class="num ' + (r.carried >= 1e6 ? "hot" : "") + '">' + fmt(r.carried)
-              + "</td></tr>").join("") + "</tbody></table></div>"
-        : "")
     + '<div class="dfoot"><b>Carried</b> is an addition’s size times the turns that re-read it '
       + "before the next reset — the model is stateless, so everything in the window is re-sent every "
       + "turn. Figures are the runtime’s own per-turn usage; payload sizes are approximate.</div>";
@@ -1018,6 +1023,29 @@ function renderDrawer() {
   drawDrawerTurns();
   dbody.querySelectorAll(".sortbtn").forEach(btn =>
     btn.addEventListener("click", () => { drawerSort = btn.dataset.s; drawDrawerTurns(); }));
+}
+
+/* A connector with twenty tools reads as one line, not twenty: its tools are
+   summed into a header row and indented beneath it. Built-ins stay flat.
+   Everything sorts by carried, groups by their sum. */
+function groupedToolRows(rows) {
+  const cell = (r, cls) => '<tr class="' + cls + '"><td class="tnum">' + esc(r.tool)
+    + '</td><td class="num">' + r.calls.toLocaleString() + '</td><td class="num">'
+    + r.tokens.toLocaleString() + '</td><td class="num ' + (r.carried >= 1e6 ? "hot" : "")
+    + '">' + fmt(r.carried) + "</td></tr>";
+  const groups = new Map(), flat = [];
+  rows.forEach(r => {
+    if (!r.group) { flat.push(r); return; }
+    const g = groups.get(r.group) || { tool: r.group, calls: 0, tokens: 0, carried: 0, members: [] };
+    g.calls += r.calls; g.tokens += r.tokens; g.carried += r.carried; g.members.push(r);
+    groups.set(r.group, g);
+  });
+  const items = [...flat.map(r => ({ carried: r.carried, html: cell(r, "") })),
+                 ...[...groups.values()].map(g => ({
+                   carried: g.carried,
+                   html: cell(g, "tgroup") + g.members.sort((a, b) => b.carried - a.carried)
+                     .map(m => cell({ ...m, tool: m.tool.slice(m.tool.lastIndexOf("__") + 2) }, "tmember")).join("") }))];
+  return items.sort((a, b) => b.carried - a.carried).map(x => x.html).join("");
 }
 
 let drawerShowAll = false;

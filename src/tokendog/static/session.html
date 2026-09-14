@@ -60,6 +60,9 @@ h2{font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
 .tile .v{font-size:24px;font-weight:600;margin-top:6px;letter-spacing:-.02em}
 .tile .n{font-size:12px;color:var(--ink-2);margin-top:3px}
 .tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:3px;background:var(--surface)}
+tr.tgroup td{background:var(--surface-2);font-weight:600}
+tr.tgroup td:first-child::before{content:"▾ ";color:var(--ink-3);font-size:10px}
+tr.tmember td:first-child{padding-left:30px;color:var(--ink-2)}
 table{border-collapse:collapse;width:100%}
 thead th{text-align:right;font-size:10.5px;font-weight:600;letter-spacing:.05em;
   text-transform:uppercase;color:var(--ink-3);padding:11px 12px 9px;
@@ -134,6 +137,18 @@ td.tnum{font-family:"IBM Plex Mono",Menlo,monospace;color:var(--ink-3)}
   </section>
 
   <section>
+    <h2>By tool</h2>
+    <p class="lede">Result tokens are what a tool returned. Carried is what those results cost once
+      they were in the window — the gap between the two columns is the whole point.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Tool</th><th>Calls</th><th>Result tokens</th><th>Carried</th></tr></thead>
+        <tbody id="bytool"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
     <div class="h2row">
       <h2>Turn by turn</h2>
       <span class="sortby">
@@ -157,17 +172,6 @@ td.tnum{font-family:"IBM Plex Mono",Menlo,monospace;color:var(--ink-3)}
     </div>
   </section>
 
-  <section>
-    <h2>By tool</h2>
-    <p class="lede">Result tokens are what a tool returned. Carried is what those results cost once
-      they were in the window — the gap between the two columns is the whole point.</p>
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th>Tool</th><th>Calls</th><th>Result tokens</th><th>Carried</th></tr></thead>
-        <tbody id="bytool"></tbody>
-      </table>
-    </div>
-  </section>
 
   <footer id="foot"></footer>
 </div>
@@ -279,11 +283,26 @@ function render() {
     });
   });
 
-  el("bytool").innerHTML = (D.by_tool || []).map(r => `<tr>
+  // A connector's tools sum into one header row and indent beneath it, so a
+  // server with twenty tools reads as one line. Built-ins stay flat.
+  const cell = (r, cls) => `<tr class="${cls}">
     <td class="mono">${esc(r.tool)}</td>
     <td class="num">${r.calls.toLocaleString()}</td>
     <td class="num">${r.tokens.toLocaleString()}</td>
-    <td class="num ${r.carried >= 1e6 ? "hot" : ""}">${fmt(r.carried)}</td></tr>`).join("");
+    <td class="num ${r.carried >= 1e6 ? "hot" : ""}">${fmt(r.carried)}</td></tr>`;
+  const groups = new Map(), flat = [];
+  (D.by_tool || []).forEach(r => {
+    if (!r.group) { flat.push(r); return; }
+    const g = groups.get(r.group) || { tool: r.group, calls: 0, tokens: 0, carried: 0, members: [] };
+    g.calls += r.calls; g.tokens += r.tokens; g.carried += r.carried; g.members.push(r);
+    groups.set(r.group, g);
+  });
+  el("bytool").innerHTML = [
+    ...flat.map(r => ({ carried: r.carried, html: cell(r, "") })),
+    ...[...groups.values()].map(g => ({ carried: g.carried,
+      html: cell(g, "tgroup") + g.members.sort((a, b) => b.carried - a.carried)
+        .map(m => cell({ ...m, tool: m.tool.slice(m.tool.lastIndexOf("__") + 2) }, "tmember")).join("") })),
+  ].sort((a, b) => b.carried - a.carried).map(x => x.html).join("");
 
   el("foot").innerHTML =
     `<b>Residual across all turns: ${t.residual.toLocaleString()} tokens.</b> Growth attributable

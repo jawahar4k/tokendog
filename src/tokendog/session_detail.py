@@ -237,6 +237,22 @@ def _totals(turns: list) -> dict:
     }
 
 
+def tool_group(name: str) -> str | None:
+    """The connector an MCP tool belongs to, or None for a built-in.
+
+    `mcp__github__search_code` → `github`; a plugin-hosted one,
+    `mcp__plugin_context7_context7__query-docs`, → `context7_context7` (the
+    plugin and server names are joined by an underscore in the id and cannot
+    be told apart reliably, so the joined form is kept). The drawer indents a
+    connector's tools under one header so a server with twenty tools reads as
+    one line, not twenty.
+    """
+    if not name.startswith("mcp__") or "__" not in name[5:]:
+        return None
+    middle = name[5:].rsplit("__", 1)[0]
+    return middle[len("plugin_"):] if middle.startswith("plugin_") else middle
+
+
 def session_detail(session: str, *, root=None, home=None, top: int = 15,
                    window=None) -> dict:
     """Turn-by-turn drilldown for one session.
@@ -307,7 +323,8 @@ def session_detail(session: str, *, root=None, home=None, top: int = 15,
     for t in inside:
         for tool in t.tools:
             e = by_tool.setdefault(tool["name"], {"tool": tool["name"], "calls": 0,
-                                                  "tokens": 0, "carried": 0})
+                                                  "tokens": 0, "carried": 0,
+                                                  "group": tool_group(tool["name"])})
             e["calls"] += 1
             e["tokens"] += tool["tokens"]
             share = (t.carried / len(t.tools)) if t.tools else 0
