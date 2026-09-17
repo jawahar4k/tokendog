@@ -27,6 +27,27 @@ def _no_tokendog() -> int:
     return 0
 
 
+def _reason(result: dict) -> str:
+    """Name the cap that actually tripped, and say whether waiting will help.
+
+    The daily figure resets at midnight. The session figure does not reset at
+    all: it is the session's whole life, and resuming keeps the same id — so a
+    session cap, once crossed, stays crossed until it is raised. Saying only
+    "budget exceeded" left people waiting for a reset that was never coming.
+    """
+    b = result["budget"]
+    parts = []
+    if result["over_daily"]:
+        parts.append(f"today ${result['daily']:.2f} of ${b.daily_usd:.0f} (resets at midnight)")
+    if result["over_session"]:
+        parts.append(f"this session ${result['session']:.2f} of ${b.session_usd:.0f} — that is the "
+                     f"whole session's spend, not today's, and it does not reset")
+    return ("TokenDog budget exceeded: " + "; ".join(parts)
+            + ". Figures are API list-price attribution across this machine, not a charge. "
+            + "Raise it with /tokendog:budget --set-session N (or --set-daily N), or set "
+            + "TOKENDOG_OBSERVE_ONLY=1 in the env block of settings.json to stop enforcing.")
+
+
 def _is_budget_command(payload: dict) -> bool:
     """True for the Bash call a `/tokendog:budget` slash command makes."""
     if payload.get("tool_name") != "Bash":
@@ -63,10 +84,7 @@ def main() -> int:
         glitch = os.path.join(os.getcwd(), ".glitch", "firmware", "firmware.db")
         result = check(session_id=session_id, glitch_db=glitch if os.path.exists(glitch) else None)
         if result["over_daily"] or result["over_session"]:
-            reason = (f"TokenDog budget exceeded — today ${result['daily']:.2f}"
-                      f", session ${result['session']:.2f} (API list-price attribution, "
-                      f"not a charge). Raise it with /tokendog:budget --set-daily N, or set "
-                      f"TOKENDOG_OBSERVE_ONLY=1 in settings.json env to stop enforcing.")
+            reason = _reason(result)
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",

@@ -8,7 +8,10 @@ import pytest
 
 from tokendog.server import DEFAULT_ADDRESS, PAGE, build_server, render_page
 
-NOW = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+# Relative to the real clock, not a fixed date: the dashboard's default range is
+# the last 7 days, so a hardcoded timestamp silently falls out of the window once
+# the calendar passes it and the headline reads 0. This test did exactly that.
+NOW = datetime.now(timezone.utc) - timedelta(hours=2)
 
 
 def _rec(ts, ctx):

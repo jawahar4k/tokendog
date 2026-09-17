@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — 2026-09-17
+
+### Fixed
+- The budget deny said only "budget exceeded". It now names the cap that tripped, and says that
+  the daily figure resets at midnight while the session figure is the session's whole life and
+  does not reset — a session cap, once crossed, stays crossed until it is raised. Waiting for a
+  reset that was never coming was the actual user-facing failure.
+- `by_tool` rows carry their connector, and the drawer and session page group an MCP server's
+  tools under one header instead of listing twenty flat rows.
+- Drawer tables no longer inherit the dashboard's 1080px minimum width, so they stopped growing
+  horizontal scrollbars for two- and four-column tables. By tool moved above Turn by turn.
+
+### Testing
+- The suite is now hermetic against exported `TOKENDOG_*` switches. Running with
+  `TOKENDOG_OBSERVE_ONLY=1` set (what you do while dogfooding) made every deny and enforce test
+  pass by doing nothing.
+- A server test pinned a fixed 2026-09-08 timestamp against the dashboard's 7-day default range,
+  so it began failing once the calendar passed it. It is relative to the clock now.
+
 ## [0.2.1] — 2026-09-13
 
 ### Fixed
