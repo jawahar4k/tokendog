@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 
 # The brand mark, shown before the figures so the line is identifiable at a
@@ -36,6 +37,12 @@ CTX_WARN = 200_000      # absolute occupancy where per-turn cost starts to bite
 CTX_ALARM = 400_000     # past here a trivial tool call costs more than most replies
 AGE_WARN_H = 8.0        # a session older than a workday has drifted from its task
 AGE_ALARM_H = 24.0      # overnight-idle sessions resume at full occupancy
+# Keyed on HISTORY, deliberately, not on how full the window looks. A percentage
+# cannot tell a connector you never call from a transcript you could clear, and
+# /clear re-injects setup — so a percentage rule nags at a 1M window that is
+# fine and stays silent on a 120k one that is all dead schema.
+WORK_ALARM = 400_000    # history this big is what /clear and /compact are for
+SETUP_ALARM = 120_000   # re-sent every turn; only disabling something moves it
 LIMIT_WARN = 60.0       # % of a rate-limit window consumed
 LIMIT_ALARM = 85.0
 
@@ -170,6 +177,74 @@ def floor_segment() -> str | None:
     return paint(f"baseline {fk(total)}{breakdown}", DIM)
 
 
+def read_split(payload: dict) -> dict | None:
+    """This session's setup/work split, as the Stop hook last left it.
+
+    Pure READ, no tokendog import: the statusline runs under whatever `python3`
+    is first on PATH (often /usr/bin/python3, which cannot import tokendog), so
+    it must not depend on the import. `split_refresh` writes the file at the end
+    of each turn; this just reads it. Missing or corrupt → None, and the line
+    renders without the segment.
+    """
+    session = payload.get("session_id")
+    if not isinstance(session, str) or not re.match(r"^[A-Za-z0-9-]{8,64}$", session):
+        return None
+    home = os.environ.get("TOKENDOG_HOME") or os.path.join(os.path.expanduser("~"), ".tokendog")
+    try:
+        with open(os.path.join(home, "split", session + ".json"), encoding="utf-8") as fh:
+            split = json.load(fh)["split"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return split if isinstance(split, dict) else None
+
+
+def split_segment(payload: dict) -> str | None:
+    """`setup 70K (sys 26K · mcp 31K · skills 13K) · work 95K`.
+
+    The two halves answer different questions: setup shrinks only by disabling
+    something and is re-injected by /clear, work shrinks only by /clear. Showing
+    them apart is the whole point — a single percentage cannot say which.
+    """
+    if str(os.environ.get("TOKENDOG_STATUSLINE_SPLIT", "1")).strip().lower() in (
+            "0", "false", "no", "off"):
+        return None
+    split = read_split(payload)
+    if not split:
+        return None
+    setup, work = split.get("setup") or {}, split.get("work") or {}
+    setup_total, work_total = int(split.get("setup_total") or 0), int(split.get("work_total") or 0)
+    if not setup_total and not work_total:
+        return None
+    # Parts under this are noise on a one-line statusline: knowing the subagent
+    # listing costs 300 tokens changes nothing anyone would do.
+    NAMED = (("sys", "sys"), ("mcp", "mcp"), ("skills", "skills"), ("agents", "agents"))
+    parts = [f"{label} {human(setup[key])}" for key, label in NAMED
+             if int(setup.get(key) or 0) >= 500]
+    text = f"setup {human(setup_total)}"
+    if parts:
+        text += " (" + " · ".join(parts) + ")"
+    text += f" · work {human(work_total)}"
+    return paint(text, grade(float(setup_total), SETUP_ALARM, SETUP_ALARM * 2)
+                 if setup_total >= SETUP_ALARM else DIM)
+
+
+def lever_hint(payload: dict) -> str | None:
+    """One verb, aimed at the half that is actually heavy.
+
+    History is what /clear and /compact remove. Setup survives them both, so a
+    session carrying 300k of connector schema is told to look at the floor, not
+    to throw away its working state for nothing.
+    """
+    split = read_split(payload)
+    if not split:
+        return None
+    if int(split.get("work_total") or 0) >= WORK_ALARM:
+        return "→ /clear or /compact"
+    if int(split.get("setup_total") or 0) >= SETUP_ALARM:
+        return "→ setup is heavy, /tokendog:floor"
+    return None
+
+
 def savings_segment(payload: dict) -> str | None:
     """What the condenser has saved THIS session, when it is switched on.
 
@@ -245,10 +320,16 @@ def build(payload: dict) -> str:
         if seg:
             segments.append(seg)
 
-    # Opt-in floor segment (the fixed always-on baseline, by size).
-    flr = floor_segment()
-    if flr:
-        segments.append(flr)
+    # Where the window actually went, by which lever moves it. Preferred over
+    # the static floor segment when present: it is measured from this session's
+    # own transcript rather than from what is installed on disk.
+    spl = split_segment(payload)
+    if spl:
+        segments.append(spl)
+    else:
+        flr = floor_segment()
+        if flr:
+            segments.append(flr)
 
     # Condenser savings for this session — present only when condensing is on.
     sv = savings_segment(payload)
@@ -261,8 +342,12 @@ def build(payload: dict) -> str:
 
     # One actionable verb, and only when something is actually wrong — a nudge that
     # fires constantly is a nudge nobody reads.
-    hint = None
-    if used is not None and used >= CTX_ALARM:
+    # The split knows which half is heavy, so it names the lever that works.
+    # Occupancy is the fallback for a session with no split cached yet.
+    hint = lever_hint(payload)
+    if hint:
+        pass
+    elif used is not None and used >= CTX_ALARM:
         hint = "→ /clear"
     elif used is not None and used >= CTX_WARN:
         hint = "→ /compact"

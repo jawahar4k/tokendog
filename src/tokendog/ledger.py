@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -139,6 +140,12 @@ def _read(path) -> list[dict]:
     return out
 
 
+# How many recent message ids to remember. Dedupe only ever matters between
+# adjacent records — several transcript lines carry one API message — so a short
+# window is enough, and the state is written to disk every turn.
+SEEN_WINDOW = 40
+
+
 def session_split(path, *, records=None) -> Split:
     """Divide one session's window into setup and work.
 
@@ -148,18 +155,98 @@ def session_split(path, *, records=None) -> Split:
     feeds a statusline that must print something on every keystroke.
     """
     recs = records if records is not None else _read(path)
-    acc = _Accumulator()
-    split = Split()
+    return _fold(recs, _fresh_state())[0]
 
-    seen_ids: set[str] = set()
-    last_total = 0
-    pinned_sys = 0
-    first_turn_of_session = True
-    segment_first_turn = True
-    segments = 0
+
+def _fresh_state() -> dict:
+    return {"offset": 0, "carry": "", "setup": dict.fromkeys(SETUP_KINDS, 0),
+            "work": dict.fromkeys(WORK_KINDS, 0), "last_total": 0, "pinned_sys": 0,
+            "first_turn": True, "segment_first": True, "segments": 0,
+            "turns": 0, "observed_chars": 0, "ratio_tokens": 0, "ratio_chars": 0,
+            "seen": []}
+
+
+def session_split_incremental(path, state: dict | None = None):
+    """(Split, state) reading only the bytes added since `state` was made.
+
+    A statusline re-renders on every keystroke and a long session's transcript
+    runs to tens of megabytes, so a full parse per render is not available. The
+    state carries a byte offset, a partial trailing line, and the running split.
+    A file shorter than the offset is not the file we read — start over.
+    """
+    st = dict(state) if isinstance(state, dict) else _fresh_state()
+    for key, default in _fresh_state().items():
+        st.setdefault(key, default)
+    p = Path(path)
+    try:
+        size = p.stat().st_size
+    except OSError:
+        return _state_split(st), st
+    if size < st["offset"]:
+        st = _fresh_state()
+    if size == st["offset"]:
+        return _state_split(st), st
+    try:
+        with p.open("rb") as fh:
+            fh.seek(st["offset"])
+            chunk = fh.read()
+    except OSError:
+        return _state_split(st), st
+
+    # Every byte read is consumed; the unfinished tail is kept as text and
+    # prepended next time. Advancing by what we actually read (not by the
+    # `size` we sampled before the read) means a transcript appended to between
+    # the two never loses or repeats a line.
+    st["offset"] += len(chunk)
+    text = st["carry"] + chunk.decode("utf-8", "replace")
+    lines = text.split("\n")
+    # The last element is whatever follows the final newline: either empty, or a
+    # record still being written. Either way it is not parseable yet.
+    st["carry"] = lines.pop()
+
+    recs = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(rec, dict):
+            recs.append(rec)
+    return _fold(recs, st)
+
+
+def _state_split(st: dict) -> Split:
+    split = Split(setup=dict(st["setup"]), work=dict(st["work"]),
+                  total=st["last_total"], turns=st["turns"],
+                  segments=st["segments"], observed_chars=st["observed_chars"])
+    split.ratio = _ratio(st)
+    _reconcile(split)
+    return split
+
+
+def _ratio(st: dict) -> float:
+    if st["ratio_chars"] < RATIO_MIN_OBSERVED or not st["ratio_chars"]:
+        return DEFAULT_RATIO
+    return max(RATIO_MIN, min(RATIO_MAX, st["ratio_tokens"] / (st["ratio_chars"] / 4)))
+
+
+def _fold(recs: list[dict], st: dict):
+    acc = _Accumulator()
+    split = Split(setup=dict(st["setup"]), work=dict(st["work"]))
+    seen_ids = list(st["seen"])
+    last_total = st["last_total"]
+    pinned_sys = st["pinned_sys"]
+    first_turn_of_session = st["first_turn"]
+    segment_first_turn = st["segment_first"]
+    segments = st["segments"]
+    split.turns = st["turns"]
+    split.observed_chars = st["observed_chars"]
     # Ratio evidence: tokens the API charged for growth, against the chars we
     # actually watched arrive. Only turns big enough to mean something count.
-    ratio_tokens = ratio_chars = 0
+    ratio_tokens, ratio_chars = st["ratio_tokens"], st["ratio_chars"]
 
     for rec in recs:
         kind = rec.get("type")
@@ -230,7 +317,8 @@ def session_split(path, *, records=None) -> Split:
         mid = msg.get("id") or rec.get("uuid")
         if mid in seen_ids:
             continue                       # several records, one API message
-        seen_ids.add(mid)
+        seen_ids.append(mid)
+        del seen_ids[:-SEEN_WINDOW]
 
         pend = acc.take()
         observed_chars = sum(pend.values())
@@ -239,8 +327,7 @@ def session_split(path, *, records=None) -> Split:
         if segment_first_turn:
             segments += 1
 
-        ratio = (max(RATIO_MIN, min(RATIO_MAX, ratio_tokens / (ratio_chars / 4)))
-                 if ratio_chars >= RATIO_MIN_OBSERVED and ratio_chars else DEFAULT_RATIO)
+        ratio = _ratio({"ratio_tokens": ratio_tokens, "ratio_chars": ratio_chars})
         growth = total - last_total
 
         if segment_first_turn:
@@ -275,12 +362,17 @@ def session_split(path, *, records=None) -> Split:
 
         last_total = total
 
+    st = dict(st, setup=dict(split.setup), work=dict(split.work),
+              last_total=last_total, pinned_sys=pinned_sys,
+              first_turn=first_turn_of_session, segment_first=segment_first_turn,
+              segments=segments, turns=split.turns,
+              observed_chars=split.observed_chars,
+              ratio_tokens=ratio_tokens, ratio_chars=ratio_chars, seen=seen_ids)
     split.total = last_total
     split.segments = segments
-    split.ratio = (max(RATIO_MIN, min(RATIO_MAX, ratio_tokens / (ratio_chars / 4)))
-                   if ratio_chars >= RATIO_MIN_OBSERVED and ratio_chars else DEFAULT_RATIO)
+    split.ratio = _ratio(st)
     _reconcile(split)
-    return split
+    return split, st
 
 
 def _distribute(pend: dict[str, int], ratio: float, *, cap: int,
@@ -366,3 +458,82 @@ def _reconcile(split: Split) -> None:
         if gap < 0:                          # work was already empty: clip setup
             largest = max(split.setup, key=lambda b: split.setup[b])
             split.setup[largest] = max(0, split.setup[largest] + gap)
+
+
+# --- the cache the statusline reads -----------------------------------------
+#
+# The statusline runs under whatever `python3` is first on PATH, which usually
+# cannot import tokendog, and it re-renders on every keystroke. So it never
+# computes the split: a tokendog-capable hook writes this small file at the end
+# of each turn and the statusline just reads it. Same arrangement as the floor
+# cache, and the reason both surfaces agree by construction.
+
+# The session id arrives in a hook payload and becomes a filename. Anything but
+# this shape is refused rather than sanitised — a rejected write is a missing
+# segment, a mis-sanitised one is a write somewhere else.
+_SESSION_ID = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+
+def split_cache_dir(home=None) -> Path:
+    from .config import tokendog_home
+    return (Path(home) if home is not None else tokendog_home()) / "split"
+
+
+def _cache_path(session_id: str, home=None) -> Path | None:
+    if not isinstance(session_id, str) or not _SESSION_ID.match(session_id):
+        return None
+    return split_cache_dir(home) / f"{session_id}.json"
+
+
+def refresh_cache(session_id: str, transcript_path, *, home=None) -> dict | None:
+    """Update one session's cached split from the bytes added since last time.
+
+    Returns the split as a dict, or None if the id is not usable. Never raises:
+    it runs inside a hook, and a hook that throws takes the session with it.
+    """
+    path = _cache_path(session_id, home)
+    if path is None:
+        return None
+    state = None
+    try:
+        state = json.loads(path.read_text(encoding="utf-8")).get("state")
+    except (OSError, ValueError):
+        pass
+    try:
+        split, state = session_split_incremental(transcript_path, state)
+    except Exception:
+        return None
+    payload = split.as_dict()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps({"split": payload, "state": state},
+                                  separators=(",", ":")), encoding="utf-8")
+        tmp.replace(path)                 # a half-written cache must never be read
+        _prune(split_cache_dir(home))
+    except OSError:
+        pass
+    return payload
+
+
+def read_cached_split(session_id: str, *, home=None) -> dict | None:
+    path = _cache_path(session_id, home)
+    if path is None:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))["split"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _prune(directory: Path, keep: int = 60) -> None:
+    """One file per session, forever, is a slow leak on a laptop."""
+    try:
+        files = sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return
+    for stale in files[:-keep]:
+        try:
+            stale.unlink()
+        except OSError:
+            pass

@@ -224,6 +224,55 @@ def read_transcripts(root=None) -> Iterator[TokenEvent]:
         yield from read_transcript(jf)
 
 
+def project_of_path(path) -> str | None:
+    """The project a transcript belongs to, from its own `cwd` records.
+
+    Not from the encoded directory name: `my-app` and `my/app` encode
+    identically, so the directory cannot be decoded back without guessing.
+    """
+    try:
+        with Path(path).open(encoding="utf-8", errors="replace") as fh:
+            for _ in range(max(1, 40)):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    name = project_of(json.loads(line))
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    continue
+                if name:
+                    return name
+    except OSError:
+        return None
+    return None
+
+
+def newest_transcript(root=None, *, project: str | None = None):
+    """The transcript written to most recently, optionally within one project.
+
+    "The session I am in" is not knowable from outside the session, so the CLI
+    offers the closest honest thing and says which one it picked.
+    """
+    base = Path(root).expanduser() if root else transcript_root()
+    best = None
+    best_mtime = -1.0
+    try:
+        candidates = base.rglob("*.jsonl")
+    except OSError:
+        return None
+    for path in candidates:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime <= best_mtime:
+            continue
+        if project and project_of_path(path) != project:
+            continue
+        best, best_mtime = path, mtime
+    return best
+
+
 def known_projects(root=None, max_lines: int = 40) -> list[str]:
     """Project names present in the transcript tree, cheaply.
 

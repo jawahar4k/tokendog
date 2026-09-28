@@ -217,6 +217,44 @@ def format_savings(s: dict) -> str:
     return "\n".join(lines)
 
 
+def format_split(d: dict) -> str:
+    """The window by lever. Leads with what to DO, not with how full it is."""
+    sp = d["split"]
+    setup, work = sp["setup"], sp["work"]
+    total = sp["total"] or 1
+    scope = " · ".join(x for x in (d.get("session"), d.get("project")) if x)
+    lines = [f"### TokenDog window split{' — ' + scope if scope else ''}", ""]
+    lines += [
+        f"- total now: **{sp['total']:,}** tokens over {sp['turns']:,} turn(s), "
+        f"{sp['segments']} context(s)",
+        f"- **setup {sp['setup_total']:,}** ({sp['setup_total'] / total:.0%}) — re-sent every "
+        "turn; shrinks only by **disabling** a connector, skill or agent. `/clear` re-injects it.",
+        f"- **work {sp['work_total']:,}** ({sp['work_total'] / total:.0%}) — the history; "
+        "shrinks by `/clear` or `/compact`, and by nothing else.",
+        "",
+        "| Half | Part | Tokens | Share |",
+        "|---|---|--:|--:|",
+    ]
+    NAMES = {"sys": "system prompt + built-in tools + instructions",
+             "mcp": "connector schemas + server instructions",
+             "skills": "skill listing + always-on bodies",
+             "agents": "subagent listing",
+             "tools": "tool results", "mcp_results": "connector results",
+             "skill_results": "skill results", "chat": "messages",
+             "other": "thinking + unattributed"}
+    for half, parts in (("setup", setup), ("work", work)):
+        for key, value in sorted(parts.items(), key=lambda kv: -kv[1]):
+            if value:
+                lines.append(f"| {half} | {NAMES.get(key, key)} | {value:,} | "
+                             f"{value / total:.0%} |")
+    lines += ["", f"_Totals are exact, from each turn's `usage`. Only the split is estimated: "
+              f"growth is shared across what arrived in between, scaled by this session's own "
+              f"measured **{sp['ratio']}** tokens per chars/4. The system prompt and built-in "
+              f"tool definitions are never written to the transcript, so the first turn's "
+              f"unexplained bulk is exactly them._"]
+    return "\n".join(lines)
+
+
 def format_savings_report(d: dict) -> str:
     """Projected beside recorded, because either one alone misleads.
 
@@ -1143,6 +1181,10 @@ def main(argv=None) -> int:
     c.add_argument("--glitch-db")
     c.add_argument("--project", help="restrict to one project (transcript cwd basename)")
 
+    sp = sub.add_parser("split", help="the window by lever: setup (disable it) vs work (clear it)")
+    sp.add_argument("--session", help="session id or unique prefix (default: the newest)")
+    sp.add_argument("--project")
+
     sub.add_parser("doctor")
 
     b = sub.add_parser("budget")
@@ -1270,6 +1312,18 @@ def main(argv=None) -> int:
     if args.cmd == "cost":
         print(format_rollup(cost_summary(args.group_by, args.since, args.until,
                                          args.glitch_db, project=args.project)))
+    elif args.cmd == "split":
+        from .ledger import session_split
+        from .session_detail import find_transcript
+        from .transcripts import newest_transcript, project_of_path
+        path = (find_transcript(args.session) if args.session
+                else newest_transcript(project=args.project))
+        if path is None:
+            print("tokendog split: no transcript found"
+                  + (f" for session {args.session}" if args.session else ""))
+            return 2
+        print(format_split({"session": path.stem[:8], "project": project_of_path(path),
+                            "split": session_split(path).as_dict()}))
     elif args.cmd == "doctor":
         print(doctor_report(os.getcwd()))
     elif args.cmd == "budget":

@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-09-27
+
+### Added
+- **The setup/work ledger** (`tokendog split`, `tokendog.ledger`). Divides the window by which
+  lever moves it: setup (system prompt, connector schemas, skills, agents) shrinks only by
+  disabling something and is re-injected by `/clear`; work (tool results, messages, thinking)
+  shrinks only by `/clear` or `/compact`. Totals stay exact, from each turn's `usage`; only the
+  split is estimated, and the session measures its own chars-per-token ratio rather than
+  assuming 4.
+- **Statusline shows the split** and names the lever that works: `/clear or /compact` when the
+  history is heavy, "setup is heavy" when it is not. The old rule fired on occupancy, which
+  nags at a big window that is fine and says nothing about a small one that is all dead schema.
+- A Stop hook refreshes the split from the bytes added since the last turn: a 124 MB transcript
+  costs ~660 ms once and ~0.1 ms per turn after.
+
 ## [0.2.2] — 2026-09-17
 
 ### Fixed

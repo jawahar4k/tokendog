@@ -274,3 +274,145 @@ def test_unreadable_lines_are_skipped(tmp_path):
 def test_malformed_records_do_not_crash(tmp_path, bad):
     p = _write(tmp_path, [bad, _assistant("m1", 5_000)])
     assert session_split(p).total == 5_000
+
+
+# --- incremental: a statusline cannot re-read 60 MB on every keystroke -------
+
+
+def test_resuming_from_a_cached_offset_matches_a_full_parse(tmp_path):
+    """The whole point of the offset cache: same answer, new bytes only."""
+    from tokendog.ledger import session_split_incremental
+    head = [_attach("skill_listing", content="k" * 3000, skillCount=1, names=["a"]),
+            _assistant("m1", 40_000, tools=[("t1", "Bash")])]
+    tail = [_result("t1", "o" * 8000), _assistant("m2", 55_000),
+            _user("u" * 2000), _assistant("m3", 61_000)]
+    p = _write(tmp_path, head)
+    first, state = session_split_incremental(p)
+    with p.open("a", encoding="utf-8") as fh:
+        for r in tail:
+            fh.write(json.dumps(r) + "\n")
+    resumed, _ = session_split_incremental(p, state)
+    whole = session_split(p)
+    assert resumed.as_dict() == whole.as_dict()
+    assert state["offset"] > 0
+
+
+def test_a_partial_last_line_is_not_parsed_until_it_is_whole(tmp_path):
+    """A transcript is appended to while we read it. Half a line is not a record."""
+    from tokendog.ledger import session_split_incremental
+    p = _write(tmp_path, [_assistant("m1", 20_000)])
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write('{"type": "assistant", "message": {"id": "m2", "usa')
+    split, state = session_split_incremental(p)
+    assert split.total == 20_000
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write('ge": {"input_tokens": 33000}, "content": []}}\n')
+    resumed, _ = session_split_incremental(p, state)
+    assert resumed.total == 33_000
+
+
+def test_a_rewritten_transcript_starts_over(tmp_path):
+    """If the file is now shorter than our offset it is not the file we read."""
+    from tokendog.ledger import session_split_incremental
+    p = _write(tmp_path, [_assistant("m1", 20_000), _assistant("m2", 90_000)])
+    _, state = session_split_incremental(p)
+    _write(tmp_path, [_assistant("z1", 7_000)])
+    split, _ = session_split_incremental(p, state)
+    assert split.total == 7_000
+
+
+def test_a_resumed_state_does_not_grow_without_bound(tmp_path):
+    """State is written to disk on every turn, so it cannot accumulate one entry
+    per message id for the life of a session."""
+    from tokendog.ledger import session_split_incremental
+    recs = []
+    for i in range(400):
+        recs.append(_assistant(f"m{i}", 1_000 + i * 10))
+    p = _write(tmp_path, recs)
+    _, state = session_split_incremental(p)
+    assert len(json.dumps(state)) < 4_000
+
+
+# --- the cache the statusline reads -----------------------------------------
+
+
+def test_refresh_cache_writes_a_split_the_statusline_can_read(tmp_path):
+    from tokendog.ledger import refresh_cache, read_cached_split
+    p = _write(tmp_path, [_attach("skill_listing", content="k" * 4000, skillCount=1,
+                                  names=["a"]),
+                          _assistant("m1", 40_000, tools=[("t1", "Bash")]),
+                          _result("t1", "o" * 8000),
+                          _assistant("m2", 70_000)])
+    home = tmp_path / "state"
+    out = refresh_cache("sess-0001-aaa", p, home=home)
+    assert out["total"] == 70_000
+    cached = read_cached_split("sess-0001-aaa", home=home)
+    assert cached["setup"]["sys"] > 0 and cached["work"]["tools"] > 0
+    assert cached["total"] == 70_000
+
+
+def test_a_second_refresh_reads_only_the_new_bytes(tmp_path):
+    from tokendog.ledger import refresh_cache
+    home = tmp_path / "state"
+    p = _write(tmp_path, [_assistant("m1", 20_000)])
+    refresh_cache("sess-0002-bbb", p, home=home)
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(_assistant("m2", 50_000)) + "\n")
+    out = refresh_cache("sess-0002-bbb", p, home=home)
+    assert out["total"] == 50_000
+    state = json.loads((home / "split" / "sess-0002-bbb.json").read_text())["state"]
+    assert state["offset"] > 0
+
+
+@pytest.mark.parametrize("bad", ["../escape", "a/b", "", "x" * 200, "we;rd$"])
+def test_a_session_id_is_validated_before_it_becomes_a_filename(tmp_path, bad):
+    """The id comes from the hook payload. It must never steer a write."""
+    from tokendog.ledger import refresh_cache, read_cached_split
+    p = _write(tmp_path, [_assistant("m1", 9_000)])
+    assert refresh_cache(bad, p, home=tmp_path / "state") is None
+    assert read_cached_split(bad, home=tmp_path / "state") is None
+
+
+def test_a_missing_cache_is_none_not_a_crash(tmp_path):
+    from tokendog.ledger import read_cached_split
+    assert read_cached_split("never-written", home=tmp_path) is None
+
+
+def test_refresh_never_raises_on_a_bad_transcript(tmp_path):
+    from tokendog.ledger import refresh_cache
+    assert refresh_cache("sess-0003-ccc", tmp_path / "gone.jsonl", home=tmp_path / "s") is not None
+
+
+# --- the report --------------------------------------------------------------
+
+
+def test_format_split_leads_with_the_lever_not_the_percentage():
+    from tokendog.report import format_split
+    out = format_split({"session": "abcd1234", "project": "demo", "split": {
+        "setup": {"sys": 26_000, "mcp": 31_000, "skills": 13_000, "agents": 300},
+        "work": {"tools": 90_000, "mcp_results": 0, "skill_results": 0,
+                 "chat": 5_000, "other": 1_000},
+        "setup_total": 70_300, "work_total": 96_000, "total": 166_300,
+        "ratio": 2.1, "turns": 40, "segments": 2}})
+    assert "setup" in out.lower() and "work" in out.lower()
+    assert "70,300" in out and "96,000" in out and "166,300" in out
+    assert "disabl" in out.lower()      # says what moves setup
+    assert "2.1" in out                 # the measured ratio is stated, not hidden
+
+
+def test_newest_transcript_picks_the_most_recently_written(tmp_path):
+    from tokendog.transcripts import newest_transcript
+    import os, time
+    a = tmp_path / "-Users-x-alpha"; a.mkdir()
+    b = tmp_path / "-Users-x-beta"; b.mkdir()
+    old = a / "old.jsonl"; old.write_text(json.dumps({"cwd": "/Users/x/alpha"}) + "\n")
+    new = b / "new.jsonl"; new.write_text(json.dumps({"cwd": "/Users/x/beta"}) + "\n")
+    os.utime(old, (time.time() - 500, time.time() - 500))
+    assert newest_transcript(root=tmp_path).name == "new.jsonl"
+    assert newest_transcript(root=tmp_path, project="alpha").name == "old.jsonl"
+    assert newest_transcript(root=tmp_path, project="nope") is None
+
+
+def test_newest_transcript_on_an_empty_root_is_none(tmp_path):
+    from tokendog.transcripts import newest_transcript
+    assert newest_transcript(root=tmp_path) is None
