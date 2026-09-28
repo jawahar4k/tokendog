@@ -72,6 +72,17 @@ def main() -> int:
         rep = condense(out, tool_name=tool_name, command=command, use_worker=worker_on)
         if rep["reduced"]:
             new_out, method = rep["digest"], rep["method"]
+            if mode == "enforce":
+                # Save the whole output BEFORE replacing it, and point at the
+                # ranges that did not survive. A cut with nowhere to read the
+                # rest back is the truncation this exists to replace, so if the
+                # spill cannot be written we do not cut at all.
+                from tokendog.condense_spill import prune, save
+                spill = save(payload.get("session_id"), out)
+                if spill is None:
+                    return 0
+                new_out = new_out + "\n" + spill.pointer(kept_ranges=rep["kept_ranges"])
+                prune()
         else:
             max_lines = int(os.environ.get("TOKENDOG_MAX_LINES", "200"))
             new_out, cut = truncate_text(out, max_lines=max_lines, max_bytes=max_bytes)

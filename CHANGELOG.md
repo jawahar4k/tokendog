@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-09-28
+
+### Changed
+- **The condenser saves before it cuts.** In enforce mode the full tool output is written to
+  `~/.tokendog/output/<session>/` (0700 dirs, 0600 files, pruned after 7 days) and the digest ends
+  with a pointer naming the exact line ranges that are missing, so any of them can be read back
+  with `Read(offset=…, limit=…)`. If the spill cannot be written, nothing is cut — a cut with
+  nowhere to read the rest back is the truncation this replaces.
+- Every condense tier now reports the 1-based line ranges it kept, which is what makes the gaps
+  nameable. A worker summary reports none, because no line of the original survives it.
+- Shadow writes no spill: filling the disk with output nobody will read is not measuring.
+
 ## [0.4.0] — 2026-09-28
 
 ### Added

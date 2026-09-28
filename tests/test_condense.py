@@ -5,7 +5,7 @@ from tokendog.approx import approx_tokens
 
 def test_grep_output_keeps_first_matches_and_counts_rest():
     text = "\n".join(f"src/f{i}.ts:{i}: match here" for i in range(300))
-    digest, method = deterministic_condense(text, "Bash", "grep -rn match src/")
+    digest, method, _kept = deterministic_condense(text, "Bash", "grep -rn match src/")
     assert method == "grep-matches"
     assert approx_tokens(digest) < approx_tokens(text)
     assert "more" in digest and "80 matches" in digest
@@ -13,14 +13,14 @@ def test_grep_output_keeps_first_matches_and_counts_rest():
 
 def test_small_grep_is_left_alone():
     text = "\n".join(f"m{i}" for i in range(10))
-    digest, method = deterministic_condense(text, "Bash", "grep x .")
+    digest, method, _kept = deterministic_condense(text, "Bash", "grep x .")
     assert digest is None      # under cap → don't touch
 
 
 def test_test_output_keeps_failures():
     lines = ["PASS test_a"] * 400 + ["FAIL test_b: assertion error", "E   assert 1 == 2"] + ["PASS test_c"] * 50
     text = "\n".join(lines)
-    digest, method = deterministic_condense(text, "Bash", "pytest -q")
+    digest, method, _kept = deterministic_condense(text, "Bash", "pytest -q")
     assert method == "errors"
     assert "FAIL test_b" in digest and "assert 1 == 2" in digest
     assert approx_tokens(digest) < approx_tokens(text)
@@ -28,7 +28,7 @@ def test_test_output_keeps_failures():
 
 def test_generic_large_output_head_tail():
     text = "\n".join(f"line {i}" for i in range(500))
-    digest, method = deterministic_condense(text, "Bash", "docker logs app")
+    digest, method, _kept = deterministic_condense(text, "Bash", "docker logs app")
     assert method == "head-tail"
     assert "elided" in digest
     assert "line 0" in digest and "line 499" in digest
@@ -89,7 +89,7 @@ import pytest
 ])
 def test_a_whole_file_read_is_never_head_tailed(tool, command):
     text = "\n".join(f"line {i}: something unique" for i in range(600))
-    digest, method = deterministic_condense(text, tool, command)
+    digest, method, _kept = deterministic_condense(text, tool, command)
     assert digest is None and method == ""
 
 
@@ -101,7 +101,7 @@ def test_a_whole_file_read_is_never_head_tailed(tool, command):
 ])
 def test_command_output_still_gets_head_tail(command):
     text = "\n".join(f"line {i}" for i in range(600))
-    _, method = deterministic_condense(text, "Bash", command)
+    _, method, _kept = deterministic_condense(text, "Bash", command)
     assert method == "head-tail"
 
 
@@ -109,18 +109,62 @@ def test_a_file_read_mixed_with_a_grep_is_left_alone():
     """`cat f; grep …` must not hit the grep tier: it would keep the first 80
     lines — the file's head — and drop the actual matches."""
     text = "\n".join(f"src/f{i}.ts:{i}: match" for i in range(300))
-    digest, method = deterministic_condense(text, "Bash", 'cat src/x.ts; echo ==; grep -n "match" src/')
+    digest, method, _kept = deterministic_condense(text, "Bash", 'cat src/x.ts; echo ==; grep -n "match" src/')
     assert digest is None and method == ""
 
 
 def test_a_pure_grep_still_condenses_as_matches():
     text = "\n".join(f"src/f{i}.ts:{i}: match" for i in range(300))
-    _, method = deterministic_condense(text, "Bash", "grep -rn match src/")
+    _, method, _kept = deterministic_condense(text, "Bash", "grep -rn match src/")
     assert method == "grep-matches"
 
 
 @pytest.mark.parametrize("command", ["git diff HEAD~1 -- src/", "git show abc123", "diff -u a b"])
 def test_a_diff_is_read_for_its_hunks_and_never_cut(command):
     text = "\n".join(f"+line {i}" for i in range(600))
-    digest, method = deterministic_condense(text, "Bash", command)
+    digest, method, _kept = deterministic_condense(text, "Bash", command)
     assert digest is None and method == ""
+
+
+# --- kept ranges: what makes the cut reversible ------------------------------
+
+
+def test_every_digest_reports_which_lines_it_kept():
+    """Without this the spill file is just a file: the pointer cannot say which
+    ranges are missing, and the model has nothing to ask for."""
+    text = "\n".join(f"line {i}" for i in range(600))
+    r = condense(text, tool_name="Bash", command="docker logs app")
+    assert r["reduced"]
+    assert r["kept_ranges"], "a reduced digest must say what it kept"
+    for start, end in r["kept_ranges"]:
+        assert 1 <= start <= end <= 600
+
+
+def test_the_kept_ranges_cover_the_head_and_the_tail():
+    text = "\n".join(f"line {i}" for i in range(600))
+    r = condense(text, tool_name="Bash", command="docker logs app")
+    covered = {n for start, end in r["kept_ranges"] for n in range(start, end + 1)}
+    assert 1 in covered and 600 in covered
+    assert len(covered) < 600            # something really was left out
+
+
+def test_an_untouched_output_keeps_everything():
+    r = condense("a\nb\nc", tool_name="Bash", command="echo hi")
+    assert not r["reduced"]
+    assert r["kept_ranges"] == [(1, 3)]
+
+
+def test_the_grep_tier_keeps_a_leading_block():
+    text = "\n".join(f"src/f{i}.ts:{i}: match" for i in range(300))
+    r = condense(text, tool_name="Bash", command="grep -rn match src/")
+    assert r["method"] == "grep-matches"
+    assert r["kept_ranges"] == [(1, 80)]
+
+
+def test_the_error_tier_keeps_the_lines_it_showed():
+    lines = ["PASS a"] * 400 + ["FAIL b: assertion error"] + ["PASS c"] * 50
+    r = condense("\n".join(lines), tool_name="Bash", command="pytest -q")
+    assert r["method"] == "errors"
+    covered = {n for start, end in r["kept_ranges"] for n in range(start, end + 1)}
+    assert 401 in covered                # the FAIL line, 1-based
+    assert 1 in covered and 451 in covered

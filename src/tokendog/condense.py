@@ -85,16 +85,24 @@ def _footer(total_lines: int, hint: str) -> str:
     return f"\n… [condensed by TokenDog — {total_lines} lines total; {hint}]"
 
 
-def _head_tail(text: str, head: int, tail: int, hint: str) -> str:
+def _head_tail(text: str, head: int, tail: int, hint: str):
+    """(digest, kept_ranges). Ranges are 1-based and inclusive, so the caller
+    can name the gaps between them and the model can Read any of them back."""
     lines = text.splitlines()
-    if len(lines) <= head + tail:
-        return text
-    kept = lines[:head] + [f"… [{len(lines) - head - tail} lines elided] …"] + lines[-tail:]
-    return "\n".join(kept) + _footer(len(lines), hint)
+    n = len(lines)
+    if n <= head + tail:
+        return text, [(1, n)] if n else []
+    kept = lines[:head] + [f"… [{n - head - tail} lines elided] …"] + lines[-tail:]
+    return "\n".join(kept) + _footer(n, hint), [(1, head), (n - tail + 1, n)]
 
 
-def deterministic_condense(text: str, tool_name: str, command: str) -> tuple[str | None, str]:
-    """(digest, method) with no model, or (None, "") if not confidently reducible.
+def deterministic_condense(text: str, tool_name: str, command: str):
+    """(digest, method, kept_ranges) with no model, or (None, "", []) when not
+    confidently reducible.
+
+    `kept_ranges` are the 1-based inclusive line ranges the digest actually
+    contains. They are what makes the cut reversible: the caller spills the full
+    output and names the gaps, so nothing is lost without a pointer.
 
     Only returns a digest it is sure preserves the useful part; anything
     ambiguous is left to the worker (or to plain truncation upstream).
@@ -106,36 +114,42 @@ def deterministic_condense(text: str, tool_name: str, command: str) -> tuple[str
     # because `cat f; grep …` would otherwise hit the grep tier and keep the
     # first 80 lines — the file's head, not the matches.
     if _is_file_read(tool_name, command):
-        return None, ""
+        return None, "", []
 
     # grep/search output IS already the matches — keep the first block, count the rest.
     if tool_name == "Bash" and _GREP.search(command or ""):
         cap = 80
         if n <= cap:
-            return None, ""
+            return None, "", []
         kept = lines[:cap]
         return ("\n".join(kept) + _footer(n, f"first {cap} matches shown, {n - cap} more — "
-                "narrow the pattern or add a path to see specific ones"), "grep-matches")
+                "narrow the pattern or add a path to see specific ones"),
+                "grep-matches", [(1, cap)])
 
     # test/build output — keep the failure lines plus head and tail (the summary).
     if tool_name == "Bash" and _TESTY.search(command or ""):
-        fails = [ln for ln in lines if _FAIL.search(ln)]
-        if fails and len(fails) < n * 0.5:      # a mostly-passing run with some failures
+        fail_at = [i for i, ln in enumerate(lines) if _FAIL.search(ln)]
+        if fail_at and len(fail_at) < n * 0.5:  # a mostly-passing run with some failures
             head, tail = lines[:8], lines[-8:]
-            body = fails[:120]
+            body_at = fail_at[:120]
+            body = [lines[i] for i in body_at]
             digest = ("\n".join(head)
-                      + f"\n… [showing {len(body)} of {len(fails)} error/fail lines] …\n"
+                      + f"\n… [showing {len(body)} of {len(fail_at)} error/fail lines] …\n"
                       + "\n".join(body) + "\n… [tail] …\n" + "\n".join(tail)
                       + _footer(n, "re-run the command for the full log"))
             if approx_tokens(digest) < approx_tokens(text):
-                return digest, "errors"
+                kept = [(1, min(8, n))] + [(i + 1, i + 1) for i in body_at]
+                kept.append((max(1, n - 7), n))
+                return digest, "errors", sorted(kept)
 
     # generic large COMMAND output (a build, a log, a listing) — head + tail with
     # the middle elided. A file read never reaches here: see the top of this function.
     if n > 220:
-        return _head_tail(text, head=120, tail=60,
-                          hint="re-run with a range/filter, or Read specific lines, for the middle"), "head-tail"
-    return None, ""
+        digest, kept = _head_tail(
+            text, head=120, tail=60,
+            hint="re-run with a range/filter, or Read specific lines, for the middle")
+        return digest, "head-tail", kept
+    return None, "", []
 
 
 def worker_available() -> bool:
@@ -190,13 +204,16 @@ def condense(text: str, *, tool_name: str = "", command: str = "",
     input (falls back to the original if no tier beats it).
     """
     raw_tok = approx_tokens(text)
+    total_lines = len(text.splitlines())
     result = {"raw_tokens": raw_tok, "digest": text, "digest_tokens": raw_tok,
-              "method": "none", "reduced": False, "worker_used": False}
+              "method": "none", "reduced": False, "worker_used": False,
+              "lines": total_lines,
+              "kept_ranges": [(1, total_lines)] if total_lines else []}
 
-    digest, method = deterministic_condense(text, tool_name, command)
+    digest, method, kept = deterministic_condense(text, tool_name, command)
     if digest is not None and approx_tokens(digest) < raw_tok:
         result.update(digest=digest, digest_tokens=approx_tokens(digest),
-                      method=method, reduced=True)
+                      method=method, reduced=True, kept_ranges=kept)
         return result
 
     # Deterministic couldn't confidently reduce it. Try the worker if permitted.
@@ -204,8 +221,11 @@ def condense(text: str, *, tool_name: str = "", command: str = "",
         w = haiku_condense(text, target_tokens=max_tokens, tool_name=tool_name, command=command)
         if w and approx_tokens(w) < raw_tok:
             w = w + _footer(len(text.splitlines()), "worker summary — re-run for the raw output")
+            # A worker summary is prose: no line of the original survives, so
+            # every line is a gap and the spill pointer says so.
             result.update(digest=w, digest_tokens=approx_tokens(w),
-                          method="haiku", reduced=True, worker_used=True)
+                          method="haiku", reduced=True, worker_used=True,
+                          kept_ranges=[])
             return result
 
     return result

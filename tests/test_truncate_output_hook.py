@@ -33,7 +33,12 @@ def test_large_output_truncated(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TOKENDOG_MAX_LINES", "50")
     mod = _load()
     big = "\n".join(str(i) for i in range(1000))
-    rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big, "tool_name": "Bash"}, monkeypatch, capsys)
+    rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big,
+                         "tool_name": "Bash",
+                         # Enforce spills the full output first, which needs a
+                         # session to file it under; every real payload has one.
+                         "session_id": "abcd1234-0000-4000-8000-abcdefabcdef"},
+                   monkeypatch, capsys)
     assert rc == 0
     data = json.loads(out)
     assert data["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
@@ -83,3 +88,56 @@ def test_bad_stdin_safe(monkeypatch, capsys):
     mod = _load()
     monkeypatch.setattr(sys, "stdin", io.StringIO("not json"))
     assert mod.main() == 0
+
+
+# --- save before cutting -----------------------------------------------------
+
+
+def test_enforce_saves_the_full_output_and_points_at_it(tmp_path, monkeypatch, capsys):
+    """The contract that makes this condensing rather than truncating."""
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    monkeypatch.setenv("TOKENDOG_TRUNCATE_MODE", "enforce")
+    mod = _load()
+    big = "\n".join(f"line {i}" for i in range(600))
+    rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big,
+                         "tool_name": "Bash", "tool_input": {"command": "docker logs app"},
+                         "session_id": "abcd1234-0000-4000-8000-abcdefabcdef"},
+                   monkeypatch, capsys)
+    assert rc == 0
+    shortened = json.loads(out)["hookSpecificOutput"]["updatedToolOutput"]
+    assert "TokenDog" in shortened
+    # The pointer names a real file holding the whole thing, and the gaps.
+    saved = [w for w in shortened.split() if w.startswith(str(tmp_path))]
+    assert saved, shortened
+    path = saved[0].rstrip(";")
+    assert open(path, encoding="utf-8").read() == big
+    assert "121-540" in shortened
+
+
+def test_a_failed_spill_means_no_cut(tmp_path, monkeypatch, capsys):
+    """Cutting without somewhere to read the rest back IS the truncation this
+    replaces. No spill, no cut — the model gets the whole output."""
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    monkeypatch.setenv("TOKENDOG_TRUNCATE_MODE", "enforce")
+    mod = _load()
+    big = "\n".join(f"line {i}" for i in range(600))
+    rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big,
+                         "tool_name": "Bash", "tool_input": {"command": "docker logs app"},
+                         "session_id": "../not-a-session"},   # refused by the spill
+                   monkeypatch, capsys)
+    assert rc == 0 and out.strip() == ""
+
+
+def test_shadow_does_not_write_a_spill(tmp_path, monkeypatch, capsys):
+    """Shadow measures. Filling the disk with output nobody will read is not
+    measuring."""
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
+    monkeypatch.setenv("TOKENDOG_TRUNCATE_MODE", "shadow")
+    mod = _load()
+    big = "\n".join(f"line {i}" for i in range(600))
+    _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big, "tool_name": "Bash",
+               "tool_input": {"command": "docker logs app"},
+               "session_id": "abcd1234-0000-4000-8000-abcdefabcdef"}, monkeypatch, capsys)
+    assert not (tmp_path / "output").exists()
+    from tokendog.savings import savings_summary
+    assert savings_summary()["events"] == 1      # still recorded
