@@ -158,3 +158,23 @@ def test_cli_shim_bootstraps_before_dispatching():
     src = (ROOT / "scripts" / "tokendog_cli.py").read_text()
     assert "from _bootstrap import ensure_tokendog" in src
     assert src.index("ensure_tokendog()") < src.index("from tokendog.report import")
+
+
+def test_the_read_guard_is_wired_to_read_only():
+    """A PreToolUse matcher of "*" would run the guard on every tool call, which
+    is a subprocess per call to answer "not a Read"."""
+    hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]
+    blocks = [b for b in hooks["PreToolUse"] if "read_guard.py" in json.dumps(b)]
+    assert len(blocks) == 1
+    assert blocks[0]["matcher"] == "Read"
+
+
+def test_the_bulk_reader_subagent_ships_and_is_cheap():
+    """It exists so a big file is read in a throwaway window. Pointing it at an
+    expensive model, or giving it write tools, defeats both halves."""
+    src = (ROOT / "agents" / "bulk-reader.md").read_text()
+    assert src.startswith("---")
+    assert "model: haiku" in src
+    assert "tools: Read, Grep, Glob" in src
+    for forbidden in ("Edit", "Write", "Bash"):
+        assert f"tools: {forbidden}" not in src and f", {forbidden}" not in src.split("\n")[3]

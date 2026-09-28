@@ -217,6 +217,34 @@ def format_savings(s: dict) -> str:
     return "\n".join(lines)
 
 
+def format_readguard(s: dict) -> str:
+    """What the read guard would have done, and whether it would have paid."""
+    window = f" — last {s['days']} days" if s.get("days") else ""
+    lines = [f"### TokenDog read guard{window}", ""]
+    if not s["seen"]:
+        lines.append("_No reads assessed yet. The guard runs on `Read` and is in shadow by "
+                     "default; `tokendog doctor` shows the live mode._")
+        return "\n".join(lines)
+    modes = ", ".join(f"{k}={v}" for k, v in sorted(s["modes"].items()))
+    lines += [
+        f"- whole-file reads assessed: **{s['seen']:,}**",
+        f"- worth stopping: **{s['suggested']:,}**",
+        f"- net tokens it would have saved: **{s['would_save']:,}**",
+        f"- modes seen: {modes}",
+    ]
+    if s["by_ext"]:
+        lines += ["", "| Type | Assessed | Worth stopping | Net tokens |", "|---|--:|--:|--:|"]
+        for ext, e in s["by_ext"].items():
+            lines.append(f"| `{ext}` | {e['seen']:,} | {e['suggested']:,} | "
+                         f"{e['would_save']:,} |")
+    lines += ["", "_Net of the intervention's own cost: stopping a read spends one extra round "
+              "trip, which re-reads the whole window at cache-read rate. A file is only worth "
+              "stopping while the context is under 40x its size — the guard declines the rest, "
+              "and those are the `allow` rows above. Paths are never recorded, only the "
+              "extension._"]
+    return "\n".join(lines)
+
+
 def format_split(d: dict) -> str:
     """The window by lever. Leads with what to DO, not with how full it is."""
     sp = d["split"]
@@ -1134,6 +1162,10 @@ def doctor_report(cwd: str) -> str:
     if trunc == "off":
         trunc += " — set TOKENDOG_TRUNCATE_MODE=shadow to measure, =enforce to apply"
     worker = "on" if _truthy_env("TOKENDOG_WORKER") else "off (deterministic tiers only)"
+    from .readguard import mode as _guard_mode
+    guard = _guard_mode()
+    if guard == "shadow":
+        guard += " — measuring only; `tokendog readguard` shows what it would have saved"
     try:
         from .budget import load_budget
         b = load_budget()
@@ -1155,6 +1187,7 @@ def doctor_report(cwd: str) -> str:
         "- quality-affecting features (off unless you opt in):",
         f"    - tool-output condenser: {trunc}",
         f"    - condenser worker (haiku tier): {worker}",
+        f"    - read guard: {guard}",
         f"    - budget enforcement: {budget_state}",
     ])
 
@@ -1180,6 +1213,9 @@ def main(argv=None) -> int:
     c.add_argument("--until")
     c.add_argument("--glitch-db")
     c.add_argument("--project", help="restrict to one project (transcript cwd basename)")
+
+    rg = sub.add_parser("readguard", help="what the read guard would have saved")
+    rg.add_argument("--days", type=int, default=14)
 
     sp = sub.add_parser("split", help="the window by lever: setup (disable it) vs work (clear it)")
     sp.add_argument("--session", help="session id or unique prefix (default: the newest)")
@@ -1312,6 +1348,9 @@ def main(argv=None) -> int:
     if args.cmd == "cost":
         print(format_rollup(cost_summary(args.group_by, args.since, args.until,
                                          args.glitch_db, project=args.project)))
+    elif args.cmd == "readguard":
+        from .readguard_log import summary
+        print(format_readguard(summary(days=args.days)))
     elif args.cmd == "split":
         from .ledger import session_split
         from .session_detail import find_transcript

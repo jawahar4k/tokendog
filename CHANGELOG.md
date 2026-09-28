@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-09-28
+
+### Added
+- **Read guard** (`tokendog readguard`, `tokendog.readguard`). A `PreToolUse` hook on `Read` that
+  stops a large whole-file read *before* it enters the window, instead of cutting it afterwards.
+  It charges the intervention its own cost: blocking spends one extra round trip that re-reads the
+  window at cache-read rate, so it only pays while the context is under 40x the file's size. Off
+  above that line, which is most of a long session. Shadow by default; a repeat read of the same
+  file is always allowed.
+- **`bulk-reader` subagent** — reads big files in its own throwaway window on Haiku and returns a
+  summary with `file:line` references, so the file is billed once instead of on every later turn.
+- The guard's ledger records allows as well as suggestions, because a guard that fires rarely and
+  a guard that is broken look identical from a file containing only the times it fired. Numeric
+  plus a file extension; never a path.
+
 ## [0.3.0] — 2026-09-27
 
 ### Added
