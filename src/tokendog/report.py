@@ -217,6 +217,28 @@ def format_savings(s: dict) -> str:
     return "\n".join(lines)
 
 
+def format_settings_plan(p: dict, st: dict) -> str:
+    """What the installer would do to `~/.claude/settings.json`, key by key."""
+    lines = ["### TokenDog settings", ""]
+    if p.get("error"):
+        return "\n".join(lines + [f"_{p['error']}_"])
+    VERB = {"install": "will add", "update": "will update (drifted from this checkout)",
+            "replace": "will replace yours", "unchanged": "already installed, unchanged",
+            "blocked": "**blocked** — you set this yourself"}
+    for key, item in p.items():
+        lines.append(f"- `{key}` — {VERB.get(item['action'], item['action'])} "
+                     f"(status: {st.get(key, '?')})")
+        if item["from"] is not None and item["action"] in ("blocked", "replace", "update"):
+            current = item["from"].get("command") if isinstance(item["from"], dict) else item["from"]
+            lines.append(f"    - currently: `{current}`")
+        if item["action"] in ("install", "update", "replace"):
+            lines.append(f"    - would be: `{item['to'].get('command', item['to'])}`")
+    if any(v["action"] == "blocked" for v in p.values()):
+        lines += ["", "_Nothing was changed. Re-run with `--replace` to take the key over — "
+                  "what was there is saved and `--uninstall` puts it back exactly._"]
+    return "\n".join(lines)
+
+
 def format_readguard(s: dict) -> str:
     """What the read guard would have done, and whether it would have paid."""
     window = f" — last {s['days']} days" if s.get("days") else ""
@@ -1214,6 +1236,12 @@ def main(argv=None) -> int:
     c.add_argument("--glitch-db")
     c.add_argument("--project", help="restrict to one project (transcript cwd basename)")
 
+    si = sub.add_parser("settings", help="install/inspect the settings.json keys tokendog manages")
+    si.add_argument("--apply", action="store_true", help="write the changes (default: show them)")
+    si.add_argument("--replace", action="store_true", help="take over a key you set yourself")
+    si.add_argument("--uninstall", action="store_true",
+                    help="remove only our keys, restoring anything we displaced")
+
     rg = sub.add_parser("readguard", help="what the read guard would have saved")
     rg.add_argument("--days", type=int, default=14)
 
@@ -1348,6 +1376,34 @@ def main(argv=None) -> int:
     if args.cmd == "cost":
         print(format_rollup(cost_summary(args.group_by, args.since, args.until,
                                          args.glitch_db, project=args.project)))
+    elif args.cmd == "settings":
+        from .settings_install import apply as settings_apply
+        from .settings_install import plan as settings_plan
+        from .settings_install import status as settings_status
+        from .settings_install import uninstall as settings_uninstall
+        if args.uninstall:
+            out = settings_uninstall()
+            if out["error"]:
+                print(f"tokendog settings: {out['error']}")
+                return 2
+            done = out["removed"] + out["restored"]
+            print("Removed: " + ", ".join(done) if done else "Nothing of ours to remove.")
+            return 0
+        if not args.apply:
+            print(format_settings_plan(settings_plan(replace=args.replace),
+                                       settings_status()))
+            return 0
+        out = settings_apply(replace=args.replace)
+        if out.get("error") and not out.get("blocked"):
+            print(f"tokendog settings: {out['error']}")
+            return 2
+        if out.get("blocked"):
+            print(format_settings_plan(out["plan"], settings_status()))
+            return 2
+        print(format_settings_plan(out["plan"], settings_status()))
+        if out.get("backup"):
+            print(f"\nBacked up to {out['backup']}")
+        return 0
     elif args.cmd == "readguard":
         from .readguard_log import summary
         print(format_readguard(summary(days=args.days)))

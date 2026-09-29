@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-09-29
+
+### Added
+- **`tokendog settings`** — one contract for every key written into your
+  `~/.claude/settings.json`. Shows the plan by default and changes nothing; `--apply` writes it,
+  `--replace` takes over a key you set yourself, `--uninstall` removes only ours and restores
+  exactly what was displaced. Every write is backed up and renamed into place atomically, and a
+  settings file that does not parse is refused rather than reformatted.
+- Ownership is a marker we wrote, compared with whitespace collapsed — never a substring match on
+  the name, which would adopt a user's own `~/my-tokendog-statusline.sh` and delete it on
+  uninstall. A key written by an older `init` is adopted by *resolved script path*, so existing
+  installs upgrade instead of being reported as a stranger's.
+- `status` separates `installed`, `drifted` (ours, points at another checkout), `broken` (ours,
+  points at a script that is gone) and `other`. Broken outranks drifted: a command that prints
+  nothing sends the reader hunting for the wrong problem.
+
 ## [0.5.0] — 2026-09-28
 
 ### Changed
