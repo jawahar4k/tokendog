@@ -26,6 +26,7 @@ def plain(s):
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))     # never the real ~/.claude/plugins
     for k in ("COLUMNS", "TOKENDOG_STATUSLINE_COLS"):
         monkeypatch.delenv(k, raising=False)
     return tmp_path

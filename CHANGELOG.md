@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.5] — 2026-09-30
+
+### Fixed
+- **The reload notice asked for a reload that would load nothing.** Hook scripts and the statusline
+  are looked up on every call, so an update that changes only them is already live in every open
+  window. The notice now compares what a session actually loads — hooks, commands, skills, agents,
+  MCP servers and the manifest minus its version — against the previous cached version, and stays
+  quiet when they match. Anything it cannot compare keeps the notice.
+
 ## [0.10.4] — 2026-09-30
 
 ### Fixed

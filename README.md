@@ -63,7 +63,9 @@ what the measurement half is for. Details in `docs/FEATURES.md`.
   starts, grouped by connector because that is the unit you can switch off. Names the connectors
   that are resident on every turn and never called, and the idle tools inside the ones you do use.
   `--disable` turns one off: dry run by default, backed up, reversible.
-- **Statusline** (`tokendog-plugin/scripts/statusline.py`) — window occupancy, the always-on **baseline** (MCP + skills, on by default), session age and the 5-hour / 7-day limit percentages, on screen while you work. Registered by `tokendog init`.
+- **Statusline** (`tokendog-plugin/scripts/statusline.py`) — what this window is carrying and
+  what to do about it, on screen while you work. Registered by `tokendog init`. See
+  [The statusline](#the-statusline).
 - **`tokendog-templates/`** — drop-in `CLAUDE.md` + `settings.json` baselines (`tokendog init`), with an
   extension marker that preserves your org's customizations across updates.
 - **`tokendog-mcp-toolkit/`** — the `tokendog_mcp` package: pagination, truncation, batch-dedup, dense
@@ -127,7 +129,7 @@ cd tokendog-gate && cargo test
 ## Environment toggles
 
 - `TOKENDOG_QUIET=1` — silence the end-of-turn spend summary (the `Stop says: TokenDog…` line). Token counting and budget alerts still run; only the message is muted.
-- `TOKENDOG_STATUSLINE_FLOOR=0` — hide the **baseline** segment in the statusline (it is ON by default): the always-on tokens (MCP schemas + skills + instructions) that ride in every turn. Note: the live `ctx` figure can't be split by source — Claude Code's statusline payload doesn't carry that — so the baseline is the fixed cost, not a slice of the total. Use `tokendog floor` for the full itemised budget.
+- `TOKENDOG_STATUSLINE_FLOOR=0` — hide the **baseline** segment in the statusline (it is ON by default): the always-on tokens (MCP schemas + skills + instructions) that ride in every turn. It shows only until the session's own `setup` split is measured (after the first turn), which then replaces it. Use `tokendog floor` for the full itemised budget.
 - `TOKENDOG_AUTO_REFRESH=0` — stop tokendog from auto-measuring MCP schema sizes. By default a SessionStart hook runs `surface --refresh` in the BACKGROUND when the inventory is missing/stale or a connector was added — so the statusline baseline and `tokendog floor` populate with no command to remember. It never blocks the session (detached, per-connector timeout) and changes no config.
 - `TOKENDOG_ADVICE=0` — mute the once-a-day, per-project SessionStart notice that names MCP connectors never called *in this repo* and offers the reversible fix (the assistant runs it on your "yes" — you never type a command).
 - `TOKENDOG_OBSERVE_ONLY=1` — the budget hook never denies a tool call, only watches.
@@ -234,6 +236,30 @@ console script's own interpreter) and re-exec under it, caching the answer in
 If nothing on the machine can import `tokendog`, the SessionStart hook says so. It has to: every
 other hook fails open and exits 0, so without that message a wrong interpreter looks exactly like
 a quiet, well-behaved plugin — one that records nothing and reports `$0.00` forever.
+
+## The statusline
+
+```
+🐕 tokendog ⎇ main · Opus 5.5 · ctx 365k/1M ▓▓░░░░ 37% · setup 110k (sys 55k, mcp 21k, skills 31k, agents 3k) · learned 1 lesson (5m ago) · ≈$125 · → /clear or /compact
+```
+
+Read left to right:
+
+| Segment | What it tells you |
+|---|---|
+| `tokendog ⎇ main` | Folder and git branch — what tells several open windows apart. |
+| `Opus 5.5` | The model this window runs. |
+| `ctx 365k/1M ▓▓░░░░ 37%` | Tokens in the window, re-sent on every turn. Coloured by whichever is worse: the percentage (yellow 50%, red 80%) or the absolute size (yellow 200k, red 400k) — 365k bills the same on a 1M window as it would anywhere. |
+| `setup 110k (sys …, mcp …, skills …, agents …)` | The part of the window that `/clear` and `/compact` cannot remove: system prompt, connector schemas, skills, agents. Measured from this session's own usage; only the split between parts is estimated. Yellow from 120k, red from 240k. Before the first measurement it shows the on-disk `baseline` instead. |
+| `cache cold: next turn re-caches 180k` | Shown only after the prompt cache has expired: the next message pays to write it again. |
+| `learned 1 lesson (5m ago)` | [Session learnings](#session-learnings): what the last capture kept, or `no new lessons`, `learning…`, `failed`. |
+| `saved 42k` | Tokens the output condenser saved this session, when it is on. |
+| `≈$125` | Session cost at list price, from authoritative usage. |
+| `v0.10.4→0.10.5 /plugin update` | The installed plugin is behind its source. Or `0.10.5 installed, /reload-plugins to load it`, shown only when the update changed something an open window loads (hooks, commands, skills, agents, MCP servers) and no reload has followed. |
+| `→ …` | One suggested action, at most: `→ stale, /clear` (a big window idle 12h+), `→ /clear or /compact` (history is heavy), `→ setup is heavy, /tokendog:floor` (setup is heavy — clearing would not help). |
+
+On a narrow terminal, segments shorten or drop in a fixed order, least actionable first; the
+window, the setup split and the suggestion stay.
 
 ## Session learnings
 

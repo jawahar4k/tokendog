@@ -601,7 +601,56 @@ def _update_lookup(home: str) -> tuple[str, str, str] | None:
     entry = next((p for p in manifest.get("plugins") or []
                   if isinstance(p, dict) and p.get("name") == PLUGIN), None)
     available = str((entry or {}).get("version") or "")
-    return installed, available, str(rec.get("lastUpdated") or "")
+    return (installed, available, str(rec.get("lastUpdated") or ""),
+            needs_reload(str(rec.get("installPath") or "")))
+
+
+# What an open session holds from the plugin: hooks, commands, skills, agents and
+# MCP servers are loaded once. Everything else — every hook script, this
+# statusline — is looked up per call, so a change there is live without a reload.
+RELOAD_PARTS = ("hooks", "commands", "skills", "agents", "mcpServers", ".mcp.json",
+                os.path.join(".claude-plugin", "plugin.json"))
+
+
+def _fingerprint(root: str) -> dict | None:
+    out = {}
+    for part in RELOAD_PARTS:
+        top = os.path.join(root, part)
+        paths = [top] if os.path.isfile(top) else sorted(
+            os.path.join(d, f) for d, dirs, files in os.walk(top)
+            if "__pycache__" not in d for f in files)
+        for path in paths:
+            try:
+                with open(path, "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                return None
+            if part.endswith("plugin.json"):
+                # The version always changes; it is not something a session loads.
+                data = re.sub(rb'"version"\s*:\s*"[^"]*"', b"", data)
+            out[os.path.relpath(path, root)] = data
+    return out
+
+
+def needs_reload(install_path: str) -> bool:
+    """False only when the previous cached version loads exactly the same things.
+
+    Anything unknown — no install path, no previous version kept, an unreadable
+    file — is True: the notice is then shown as before.
+    """
+    if not install_path or not os.path.isdir(install_path):
+        return True
+    parent, current = os.path.split(os.path.normpath(install_path))
+    now = _semver(current)
+    try:
+        older = [v for v in os.listdir(parent) if _semver(v) and now and _semver(v) < now]
+    except OSError:
+        return True
+    if not older:
+        return True
+    prev = os.path.join(parent, max(older, key=_semver))
+    a, b = _fingerprint(install_path), _fingerprint(prev)
+    return a is None or b is None or a != b
 
 
 def _iso_epoch(value: str) -> float | None:
@@ -679,10 +728,11 @@ def update_segment(*, home: str | None = None, use_cache: bool = True,
                 os.replace(cache + ".tmp", cache)
             except OSError:
                 pass
-    if not pair or len(pair) not in (2, 3):
+    if not pair or len(pair) not in (2, 3, 4):
         return None
     installed, available = str(pair[0]), str(pair[1])
-    updated_at = str(pair[2]) if len(pair) == 3 else ""
+    updated_at = str(pair[2]) if len(pair) >= 3 else ""
+    reload_matters = pair[3] if len(pair) == 4 else True
     # One of these came from a file a marketplace controls, and this prints to
     # a terminal: anything that is not plainly a version is refused.
     if not (_SAFE_VERSION.match(installed) and _SAFE_VERSION.match(available)):
@@ -690,7 +740,8 @@ def update_segment(*, home: str | None = None, use_cache: bool = True,
     if version_newer(installed, available) is True:
         return paint(f"v{installed}→{available} /plugin update", YEL)
     installed_at = _iso_epoch(updated_at)
-    if session_age_s and installed_at and installed_at > time.time() - session_age_s:
+    if (reload_matters and session_age_s and installed_at
+            and installed_at > time.time() - session_age_s):
         # `/reload-plugins` loads it without a restart, so the session's start
         # time never moves; the reload itself is the evidence it is loaded.
         reloaded = last_reload(transcript)

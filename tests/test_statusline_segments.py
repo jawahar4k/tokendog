@@ -455,3 +455,63 @@ def test_the_notice_now_says_reload_is_enough(tmp_path):
     home = _updated(tmp_path, "0.10.3", "0.10.3", updated_ago_s=300)
     seg = plain(mod.update_segment(home=home, use_cache=False, session_age_s=3_600))
     assert "/reload-plugins" in seg
+
+
+# --- an update that changes nothing a session loads needs no reload ------------
+
+
+def _cached(tmp_path, version, *, hooks='{"hooks": {}}', script="print(1)"):
+    root = tmp_path / "cache" / "tokendog" / "tokendog" / version
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "tokendog", "version": version}))
+    (root / "hooks").mkdir()
+    (root / "hooks" / "hooks.json").write_text(hooks)
+    (root / "scripts").mkdir()
+    (root / "scripts" / "statusline.py").write_text(script)
+    return root
+
+
+def _with_install_path(home, path):
+    p = home / ".claude" / "plugins" / "installed_plugins.json"
+    d = json.loads(p.read_text())
+    d["plugins"]["tokendog@tokendog"][0]["installPath"] = str(path)
+    p.write_text(json.dumps(d))
+
+
+def test_a_script_only_update_needs_no_reload(tmp_path):
+    """Hook scripts and the statusline are looked up per call: an update that
+    only changes them is already live in every open window."""
+    mod = _load()
+    _cached(tmp_path, "0.10.3", script="old")
+    new = _cached(tmp_path, "0.10.4", script="new")
+    home = _updated(tmp_path, "0.10.4", "0.10.4", updated_ago_s=300)
+    _with_install_path(home, new)
+    assert mod.update_segment(home=home, use_cache=False, session_age_s=3_600) is None
+
+
+def test_an_update_that_changes_hooks_still_asks_for_a_reload(tmp_path):
+    mod = _load()
+    _cached(tmp_path, "0.10.3", hooks='{"hooks": {}}')
+    new = _cached(tmp_path, "0.10.4", hooks='{"hooks": {"Stop": []}}')
+    home = _updated(tmp_path, "0.10.4", "0.10.4", updated_ago_s=300)
+    _with_install_path(home, new)
+    seg = plain(mod.update_segment(home=home, use_cache=False, session_age_s=3_600))
+    assert seg == "0.10.4 installed, /reload-plugins to load it"
+
+
+def test_no_previous_version_to_compare_keeps_the_notice(tmp_path):
+    mod = _load()
+    new = _cached(tmp_path, "0.10.4")
+    home = _updated(tmp_path, "0.10.4", "0.10.4", updated_ago_s=300)
+    _with_install_path(home, new)
+    assert "/reload-plugins" in plain(mod.update_segment(home=home, use_cache=False,
+                                                         session_age_s=3_600))
+
+
+def test_the_live_install_compares_against_the_highest_older_version(tmp_path):
+    mod = _load()
+    _cached(tmp_path, "0.9.0", hooks="ancient")          # would differ, but is not the neighbour
+    _cached(tmp_path, "0.10.3")
+    new = _cached(tmp_path, "0.10.4", script="changed")
+    assert mod.needs_reload(str(new)) is False
