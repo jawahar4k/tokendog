@@ -263,7 +263,7 @@ def test_build_puts_where_first_and_never_throws(tmp_path):
                                                "context_window_size": 1_000_000,
                                                "used_percentage": 25},
                             "cost": {"total_cost_usd": 4.2}}))
-    assert "repo:main" in line
+    assert "repo ⎇ main" in line
     assert "≈$4.20" in line
 
 

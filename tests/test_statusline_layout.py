@@ -63,14 +63,15 @@ def _payload(tmp_path, **extra):
 def test_the_line_reads_in_the_reference_order(isolated):
     _split(isolated)
     line = plain(_load().build(_payload(isolated)))
-    order = ["Opus 5.5", "abc:main", "ctx 365k/1M", "37%", "setup 75k", "≈$11.77"]
+    order = ["abc ⎇ main", "Opus 5.5", "ctx 365k/1M", "37%", "setup 75k", "≈$11.77"]
     positions = [line.index(x) for x in order]
     assert positions == sorted(positions), line
 
 
-def test_folder_and_branch_are_joined_with_a_colon(isolated):
+def test_folder_and_branch_lead_the_line(isolated):
+    """Across several windows, where you are is what tells them apart."""
     line = plain(_load().build(_payload(isolated)))
-    assert "abc:main" in line
+    assert line.split(" ", 1)[1].startswith("abc ⎇ main · Opus 5.5")
 
 
 def test_setup_parts_sit_in_brackets_separated_by_commas(isolated):
@@ -175,3 +176,37 @@ def test_the_lessons_segment_is_on_the_line(isolated):
     line = plain(_load().build(_payload(isolated)))
     assert "no new lessons (3d ago)" in line
     assert line.index("no new lessons") < line.index("≈$")
+
+
+# --- regressions from the bar: restored ---------------------------------------
+
+
+def test_the_bar_warns_on_absolute_tokens_not_just_percentage():
+    """365k is billed on every turn whether the window is 200k or 1M. On a 1M
+    window the percentage says 37% and green; the bill says otherwise."""
+    mod = _load()
+    assert mod.YEL in mod.ctx_bar(37, used=365_000)
+    assert mod.RED in mod.ctx_bar(45, used=450_000)
+    assert mod.GRN in mod.ctx_bar(10, used=100_000)
+    assert mod.RED in mod.ctx_bar(85, used=170_000)      # a small window at 85% is still red
+
+
+def test_a_large_window_past_the_absolute_line_gets_a_hint(isolated):
+    line = plain(_load().build(_payload(isolated)))           # 365k, no split cached
+    assert "/compact" in line
+
+
+def test_before_any_split_is_cached_occupancy_still_drives_the_hint(isolated):
+    """The first turns of a session have no split yet. That is exactly when a
+    resumed 450k window most needs saying."""
+    line = plain(_load().build(_payload(isolated, context_window={
+        "current_usage": {"cache_read_input_tokens": 450_000},
+        "context_window_size": 1_000_000, "used_percentage": 45})))
+    assert "/clear" in line
+
+
+def test_a_heavy_setup_is_coloured():
+    mod = _load()
+    heavy = mod._setup_text(234_000, ["mcp 180k"])
+    light = mod._setup_text(75_000, ["mcp 21k"])
+    assert mod.YEL in heavy and mod.YEL not in light

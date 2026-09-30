@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] — 2026-09-30
+
+### Changed
+- The line opens with `folder ⎇ branch`, then the model: across several windows, where you are
+  is what tells them apart.
+
+### Fixed — regressions from the 0.9.0 context bar
+- **The bar coloured by percentage alone, which lies on a big window.** 365k is re-read every turn
+  whether the window is 200k or 1M; on 1M it read 37% and green. It now takes the worse of
+  fullness and absolute tokens carried, so 365k is yellow and 450k is red on any window.
+- **No hint before a split was cached.** The first turns of a session — exactly when a resumed
+  450k window most needs saying — showed nothing. Absolute occupancy decides until the split exists.
+- **Setup lost its colour.** It turns yellow from 120k and red from 240k again: past those, only
+  disabling something helps.
+
 ## [0.10.0] — 2026-09-30
 
 ### Added — session learnings

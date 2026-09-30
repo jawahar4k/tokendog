@@ -211,7 +211,9 @@ def _setup_text(total: int, parts: list[str]) -> str:
     Commas, not ` · `: the dot separates segments, and reusing it inside one
     reads as four segments where there is one.
     """
-    head = paint(f"setup {human(total)}", MAG)
+    # Setup survives /clear; past these lines only disabling something helps.
+    colour = RED if total >= SETUP_ALARM * 2 else YEL if total >= SETUP_ALARM else MAG
+    head = paint(f"setup {human(total)}", colour)
     return head + (paint(" (" + ", ".join(parts) + ")", DIM) if parts else "")
 
 
@@ -369,7 +371,7 @@ def where_segment(payload: dict) -> str | None:
     branch = dig(payload, "worktree", "branch")
     if not (isinstance(branch, str) and _SAFE_REF.match(branch)):
         branch = git_branch(cwd)
-    text = folder + (f":{branch}" if branch else "")
+    text = folder + (f" ⎇ {branch}" if branch else "")
     return paint(text, CYA)
 
 
@@ -433,11 +435,27 @@ BAR_CELLS = 6
 BAR_WARN, BAR_ALARM = 50.0, 80.0
 
 
-def ctx_bar(pct: float) -> str:
-    """`▓▓░░░░` — how full the window is, at a glance. Green, yellow, red."""
+_SEVERITY = {GRN: 0, YEL: 1, RED: 2}
+
+
+def ctx_colour(pct: float | None, used: float | None) -> str:
+    """The worse of two readings: how full the window is, and what it bills.
+
+    Percentage alone lies on a big window: 365k is re-read on every turn
+    whether the window is 200k or 1M, but on 1M it reads 37% and green. The
+    absolute lines are the ones the cost actually crosses.
+    """
+    by_pct = GRN if pct is None or pct < BAR_WARN else YEL if pct < BAR_ALARM else RED
+    by_abs = GRN if used is None or used < CTX_WARN else YEL if used < CTX_ALARM else RED
+    return max(by_pct, by_abs, key=lambda c: _SEVERITY[c])
+
+
+def ctx_bar(pct: float, used: float | None = None) -> str:
+    """`▓▓░░░░` — how full the window is, coloured by the worse of fullness
+    and absolute tokens carried."""
     pct = max(0.0, min(100.0, float(pct)))
     filled = min(BAR_CELLS, round(pct / 100 * BAR_CELLS))
-    colour = GRN if pct < BAR_WARN else YEL if pct < BAR_ALARM else RED
+    colour = ctx_colour(pct, used)
     return paint("▓" * filled, colour) + paint("░" * (BAR_CELLS - filled), DIM)
 
 
@@ -740,25 +758,26 @@ def _ctx_seg(payload: dict, used: int | None) -> Seg | None:
     base = paint(f"ctx {human(used)}/{window_label(int(size) if size else None)}", BLD)
     if pct is None:
         return Seg(base, [])
-    full = f"{base} {ctx_bar(pct)} {pct:.0f}%"
+    full = f"{base} {ctx_bar(pct, used)} {pct:.0f}%"
     if pct >= BAR_ALARM:
         full += " " + paint("/compact", RED)
     return Seg(full, [(35, f"{base} {pct:.0f}%" + (" " + paint("/compact", RED) if pct >= BAR_ALARM else ""))])
 
 
 def build(payload: dict) -> str:
-    """mark · model · folder:branch · ctx ▓▓░░ % · setup (…) · cache · lessons · ≈$"""
+    """mark · folder ⎇ branch · model · ctx ▓▓░░ % · setup (…) · cache · lessons · ≈$"""
     segs: list[Seg | None] = []
+
+    # Where first: across several windows it is what tells them apart.
+    where = where_segment(payload)
+    if where:
+        folder_only = paint(_ANSI.sub("", where).split(" ⎇ ")[0], CYA)
+        segs.append(Seg(where, [(20, folder_only), (60, None)]))
 
     model = dig(payload, "model", "display_name") or dig(payload, "model", "id")
     if model:
         label = str(model) + ("⚡" if payload.get("fast_mode") else "")
         segs.append(Seg(paint(label, BLD), [(25, None)]))
-
-    where = where_segment(payload)
-    if where:
-        folder_only = paint(_ANSI.sub("", where).split(":")[0], CYA)
-        segs.append(Seg(where, [(20, folder_only), (60, None)]))
 
     used = occupancy(payload)
     segs.append(_ctx_seg(payload, used))
@@ -799,6 +818,13 @@ def build(payload: dict) -> str:
     # One verb, only when the history is what is heavy: /clear and /compact
     # remove history and nothing else. The 80% prompt already sits on ctx.
     hint = lever_hint(payload)
+    # No split cached yet — the first turns of a session, which is exactly when
+    # a resumed window most needs saying. Absolute occupancy decides instead.
+    if hint is None and read_split(payload) is None and used is not None:
+        if used >= CTX_ALARM:
+            hint = "→ /clear"
+        elif used >= CTX_WARN:
+            hint = "→ /compact"
     pct = num(dig(payload, "context_window", "used_percentage"))
     if hint and not (pct is not None and pct >= BAR_ALARM and "compact" in hint):
         segs.append(Seg(paint(hint, RED if "clear" in hint else YEL), []))
