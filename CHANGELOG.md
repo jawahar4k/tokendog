@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.6] — 2026-09-30
+
+### Fixed
+- **`sys` counted the system prompt twice after a compaction.** Claude Code writes the prompt
+  snapshot and instructions to the transcript again after a compaction (sometimes only then), and
+  the split added them on top of the system prompt it had already measured on the first turn. They
+  are now recognised as already counted. On real compacted sessions `sys` drops by 9–19k; the unnamed
+  bulk after a compaction — MCP schemas loaded on demand — is correspondingly larger.
+- A plugin's SessionStart context is counted under `sys`; a per-prompt hook's is not setup.
+
 ## [0.10.5] — 2026-09-30
 
 ### Fixed

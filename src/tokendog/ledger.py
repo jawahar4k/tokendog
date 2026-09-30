@@ -272,7 +272,11 @@ def _fold(recs: list[dict], st: dict):
             if not isinstance(a, dict):
                 continue
             at = a.get("type")
-            if at in _SETUP_ATTACHMENTS:
+            if at == "hook_additional_context" and a.get("hookEvent") == "SessionStart":
+                # Injected by a plugin at every start and after every compaction:
+                # it rides in the prefix like the system prompt does.
+                acc.add("sys", _chars(a.get("content")))
+            elif at in _SETUP_ATTACHMENTS:
                 bucket, fieldname, _shape = _SETUP_ATTACHMENTS[at]
                 acc.add(bucket, _chars(a.get(fieldname)))
             elif at in _WORK_ATTACHMENTS:
@@ -338,14 +342,23 @@ def _fold(recs: list[dict], st: dict):
             # schemas ToolSearch loaded on demand earlier, re-sent in the
             # rebuilt prefix. Pinning sys to the session's first segment keeps
             # the number the reader uses to decide what to disable honest.
+            #
+            # Named sys (prompt snapshot, instructions, start-up hook context) is
+            # written again after a compaction, and sometimes only then. It is
+            # the same system prompt the first turn already measured — named or
+            # not — so it is already inside the pinned figure: it is taken out
+            # of the unexplained remainder, and not added to sys a second time.
             named = _distribute(pend, ratio, cap=total)
-            remainder = max(0, total - sum(named.values()) - split.setup["sys"])
-            _merge(split, named)
             if first_turn_of_session:
+                remainder = max(0, total - sum(named.values()))
+                _merge(split, named)
                 _bump(split, "sys", remainder)
                 pinned_sys = split.setup["sys"]
                 first_turn_of_session = False
             else:
+                named.pop("sys", None)
+                remainder = max(0, total - sum(named.values()) - split.setup["sys"])
+                _merge(split, named)
                 _bump(split, "mcp", remainder)
             segment_first_turn = False
         elif growth > 0:

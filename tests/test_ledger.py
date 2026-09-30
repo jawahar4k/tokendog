@@ -239,6 +239,56 @@ def test_sys_is_pinned_to_the_first_segment(tmp_path):
     assert s.total == 45_000
 
 
+def test_named_sys_re_sent_after_a_compaction_is_not_counted_twice(tmp_path):
+    """The prompt snapshot is written to the transcript again after a
+    compaction. Pinning it AND counting the new copy doubled sys."""
+    snap = _attach("prompt_snapshot", systemPrompt=["p" * 20_000])
+    p = _write(tmp_path, [
+        snap, _assistant("m1", 30_000),
+        {"type": "system", "subtype": "compact_boundary"},
+        snap, _assistant("m2", 45_000),
+    ])
+    s = session_split(p)
+    first = session_split(_write(tmp_path, [snap, _assistant("m1", 30_000)], name="s2"))
+    assert s.setup["sys"] == first.setup["sys"] == 30_000
+    assert s.setup["mcp"] == 15_000
+
+
+def test_sys_first_seen_only_after_a_compaction_is_not_counted_twice(tmp_path):
+    """Claude Code writes the prompt snapshot at compaction, not at the start:
+    the first turn measured it as unnamed bulk, the rebuilt segment names it."""
+    snap = _attach("prompt_snapshot", systemPrompt=["p" * 20_000])
+    p = _write(tmp_path, [
+        _assistant("m1", 30_000),
+        {"type": "system", "subtype": "compact_boundary"},
+        snap, _assistant("m2", 45_000),
+    ])
+    s = session_split(p)
+    assert s.setup["sys"] == 30_000 and s.setup["mcp"] == 15_000
+
+
+def test_start_up_hook_context_is_sys(tmp_path):
+    """A plugin's SessionStart text rides in the prefix like the system prompt."""
+    hook = _attach("hook_additional_context", content=["h" * 8_000],
+                   hookEvent="SessionStart", hookName="SessionStart")
+    s = session_split(_write(tmp_path, [hook, _assistant("m1", 30_000)]))
+    assert s.setup["sys"] == 30_000
+    p = _write(tmp_path, [
+        hook, _assistant("m1", 30_000),
+        {"type": "system", "subtype": "compact_boundary"},
+        hook, _assistant("m2", 40_000),
+    ], name="s3")
+    s = session_split(p)
+    assert s.setup["sys"] == 30_000 and s.setup["mcp"] == 10_000
+
+
+def test_a_per_prompt_hook_context_is_not_setup(tmp_path):
+    hook = _attach("hook_additional_context", content=["h" * 8_000],
+                   hookEvent="UserPromptSubmit")
+    s = session_split(_write(tmp_path, [_assistant("m1", 30_000), hook, _assistant("m2", 34_000)]))
+    assert s.setup["sys"] == 30_000
+
+
 def test_a_rebuilt_window_smaller_than_sys_clips_rather_than_lying(tmp_path):
     """Disable a connector, compact, and the new window can be smaller than the
     system prompt we measured at the start. The total is the fact; the pinned
