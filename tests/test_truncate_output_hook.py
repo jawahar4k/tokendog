@@ -98,7 +98,7 @@ def test_enforce_saves_the_full_output_and_points_at_it(tmp_path, monkeypatch, c
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
     monkeypatch.setenv("TOKENDOG_TRUNCATE_MODE", "enforce")
     mod = _load()
-    big = "\n".join(f"line {i}" for i in range(600))
+    big = "\n".join(f"[{i:05d}] worker processed batch {i} in {100 + (i * 37) % 900}ms" for i in range(3_000))
     rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big,
                          "tool_name": "Bash", "tool_input": {"command": "docker logs app"},
                          "session_id": "abcd1234-0000-4000-8000-abcdefabcdef"},
@@ -111,7 +111,7 @@ def test_enforce_saves_the_full_output_and_points_at_it(tmp_path, monkeypatch, c
     assert saved, shortened
     path = saved[0].rstrip(";")
     assert open(path, encoding="utf-8").read() == big
-    assert "121-540" in shortened
+    assert "31-2940" in shortened
 
 
 def test_a_failed_spill_means_no_cut(tmp_path, monkeypatch, capsys):
@@ -120,7 +120,7 @@ def test_a_failed_spill_means_no_cut(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
     monkeypatch.setenv("TOKENDOG_TRUNCATE_MODE", "enforce")
     mod = _load()
-    big = "\n".join(f"line {i}" for i in range(600))
+    big = "\n".join(f"[{i:05d}] worker processed batch {i} in {100 + (i * 37) % 900}ms" for i in range(3_000))
     rc, out = _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big,
                          "tool_name": "Bash", "tool_input": {"command": "docker logs app"},
                          "session_id": "../not-a-session"},   # refused by the spill
@@ -134,7 +134,7 @@ def test_shadow_does_not_write_a_spill(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path))
     monkeypatch.setenv("TOKENDOG_TRUNCATE_MODE", "shadow")
     mod = _load()
-    big = "\n".join(f"line {i}" for i in range(600))
+    big = "\n".join(f"[{i:05d}] worker processed batch {i} in {100 + (i * 37) % 900}ms" for i in range(3_000))
     _run(mod, {"hook_event_name": "PostToolUse", "tool_output": big, "tool_name": "Bash",
                "tool_input": {"command": "docker logs app"},
                "session_id": "abcd1234-0000-4000-8000-abcdefabcdef"}, monkeypatch, capsys)

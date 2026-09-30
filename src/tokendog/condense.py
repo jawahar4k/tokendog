@@ -49,6 +49,46 @@ _SEGMENT = re.compile(r"&&|\|\||;|\||\n")
 _PREAMBLE = frozenset(("do", "then", "else", "sudo", "time", "env", "exec", "command", "(", "{"))
 
 
+# --- selection: what survives a cut -------------------------------------------
+#
+# One rule for all command output, rather than a tier per kind of command. The
+# head and tail carry a run's story (what started, how it ended); problem lines
+# carry the reason it ended that way, and the three lines after an error are
+# usually the ones that say why. Everything else is dropped — and saved, and
+# named by line range, so dropped is never lost.
+
+def _env_int(name: str, default: int) -> int:
+    """Unset, non-numeric or negative means default; 0 stays a valid value."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return default
+    return default if value < 0 else value
+
+
+# Every tunable has an override. These are ORBIT's measured values for its
+# fleet; on a workload whose p90 command output is 5k tokens, an 8k floor means
+# the condenser never runs, and the reader should be able to find that out.
+MIN_CONDENSE_TOKENS = _env_int("TOKENDOG_CONDENSE_MIN_TOKENS", 8_000)
+HEAD_LINES = _env_int("TOKENDOG_CONDENSE_HEAD", 30)
+TAIL_LINES = _env_int("TOKENDOG_CONDENSE_TAIL", 60)
+AFTER_LINES = _env_int("TOKENDOG_CONDENSE_AFTER", 3)       # after an error, the why
+MAX_FRAMES = _env_int("TOKENDOG_CONDENSE_FRAMES", 20)      # past this it is the same trace
+SIGNAL_BUDGET_TOKENS = _env_int("TOKENDOG_CONDENSE_BUDGET", 5_000)
+CLIP_CHARS = _env_int("TOKENDOG_CONDENSE_CLIP", 2_000)     # one minified line is not readable
+_CHARS_PER_TOKEN = 2.1         # measured on real transcripts, not the naive 4
+
+_PROBLEM = re.compile(
+    r"(?i)(\b(error|errors|fail|failed|failure|warn|warning|exception|traceback|fatal|panic|"
+    r"denied|timeout|cannot|undefined)\b|timed?\s+out|not found|✗|✘)")
+_FRAME = re.compile(r'^\s+(File ".*", line \d+|at [\w.$<>]+[ (]|at .+:\d+(:\d+)?\)?$|#\d+ )')
+# Numbers and hashes are what make otherwise-identical log lines differ.
+_NOISE = re.compile(r"\b[0-9a-f]{7,}\b|\d+")
+
+
 def _is_file_read(tool_name: str, command: str) -> bool:
     """A whole-file read: the Read tool, or any stage of a Bash command that is a reader.
 
@@ -75,8 +115,16 @@ def _is_file_read(tool_name: str, command: str) -> bool:
         if head in (_LEADING_READERS if first else _READERS):
             return True
         first = False
-        # A diff is read for its hunks; the middle is not filler either.
-        if head == "diff" or (head == "git" and len(words) > 1 and words[1] in ("diff", "show")):
+        # Where exact text matters a digest is wrong however good it is: a diff
+        # is read for its hunks, a blame for its lines, jq for its values.
+        if head in ("diff", "jq"):
+            return True
+        if head == "git" and len(words) > 1:
+            if words[1] in ("diff", "show", "blame"):
+                return True
+            if words[1] == "log" and any(w in ("-p", "--patch", "-u") for w in words[2:]):
+                return True
+        if head == "gh" and words[1:3] == ["pr", "diff"]:
             return True
     return False
 
@@ -85,71 +133,123 @@ def _footer(total_lines: int, hint: str) -> str:
     return f"\n… [condensed by TokenDog — {total_lines} lines total; {hint}]"
 
 
-def _head_tail(text: str, head: int, tail: int, hint: str):
-    """(digest, kept_ranges). Ranges are 1-based and inclusive, so the caller
-    can name the gaps between them and the model can Read any of them back."""
-    lines = text.splitlines()
+def _line_tokens(line: str) -> int:
+    return max(1, int(len(line) / _CHARS_PER_TOKEN))
+
+
+def select_lines(lines: list[str]) -> list[int]:
+    """0-based indices of the lines worth keeping, in order.
+
+    Head and tail verbatim; then every problem line with the few lines after it
+    and any stack frames that follow, until the signal budget runs out. The
+    budget is what stops a log in which every line says "error" from turning
+    the digest back into the input.
+    """
     n = len(lines)
-    if n <= head + tail:
-        return text, [(1, n)] if n else []
-    kept = lines[:head] + [f"… [{n - head - tail} lines elided] …"] + lines[-tail:]
-    return "\n".join(kept) + _footer(n, hint), [(1, head), (n - tail + 1, n)]
+    keep = set(range(min(HEAD_LINES, n))) | set(range(max(0, n - TAIL_LINES), n))
+    lo, hi = min(HEAD_LINES, n), max(0, n - TAIL_LINES)
+    budget = SIGNAL_BUDGET_TOKENS
+    i = lo
+    while i < hi:
+        if not _PROBLEM.search(lines[i]):
+            i += 1
+            continue
+        window = {i}
+        window.update(range(i + 1, min(hi, i + 1 + AFTER_LINES)))
+        j, frames = i + 1, 0
+        while j < hi and frames < MAX_FRAMES and _FRAME.match(lines[j]):
+            window.add(j)
+            j += 1
+            frames += 1
+        fresh = window - keep
+        cost = sum(_line_tokens(lines[k]) for k in fresh)
+        if cost > budget:
+            break
+        budget -= cost
+        keep |= window
+        i = max(window) + 1
+    return sorted(keep)
+
+
+def _clip(line: str) -> str:
+    if len(line) <= CLIP_CHARS:
+        return line
+    return line[:CLIP_CHARS] + f" … [+{len(line) - CLIP_CHARS:,} chars]"
+
+
+def _render(lines: list[str], kept: list[int]) -> str:
+    """The digest: kept lines in order, gaps marked, middle repeats collapsed.
+
+    Head and tail stay verbatim — they are where a reader looks first. Between
+    them, a run of lines that differ only in numbers or hashes collapses to one
+    line and a count, because `batch 1204 in 331ms` repeated four hundred times
+    is one fact.
+    """
+    n = len(lines)
+    head_end, tail_start = min(HEAD_LINES, n), max(0, n - TAIL_LINES)
+    out: list[str] = []
+    prev = -1
+    run_key, run_line, run_count = None, None, 0
+
+    def flush():
+        nonlocal run_key, run_line, run_count
+        if run_line is not None:
+            out.append(run_line + (f"  ×{run_count}" if run_count > 1 else ""))
+        run_key, run_line, run_count = None, None, 0
+
+    for idx in kept:
+        if prev >= 0 and idx > prev + 1:
+            flush()
+            out.append(f"… [{idx - prev - 1:,} lines not shown] …")
+        line = _clip(lines[idx])
+        if head_end <= idx < tail_start:
+            key = _NOISE.sub("#", lines[idx])
+            if key == run_key:
+                run_count += 1
+            else:
+                flush()
+                run_key, run_line, run_count = key, line, 1
+        else:
+            flush()
+            out.append(line)
+        prev = idx
+    flush()
+    return "\n".join(out)
+
+
+def _ranges(kept: list[int]) -> list[tuple[int, int]]:
+    """0-based indices → 1-based inclusive ranges, for the spill pointer."""
+    out: list[tuple[int, int]] = []
+    for idx in kept:
+        if out and idx + 1 == out[-1][1] + 1:
+            out[-1] = (out[-1][0], idx + 1)
+        else:
+            out.append((idx + 1, idx + 1))
+    return out
 
 
 def deterministic_condense(text: str, tool_name: str, command: str):
-    """(digest, method, kept_ranges) with no model, or (None, "", []) when not
-    confidently reducible.
+    """(digest, method, kept_ranges) with no model, or (None, "", []) when the
+    output should be left alone.
 
-    `kept_ranges` are the 1-based inclusive line ranges the digest actually
-    contains. They are what makes the cut reversible: the caller spills the full
-    output and names the gaps, so nothing is lost without a pointer.
-
-    Only returns a digest it is sure preserves the useful part; anything
-    ambiguous is left to the worker (or to plain truncation upstream).
+    `kept_ranges` are the 1-based inclusive line ranges the digest contains.
+    They make the cut reversible: the caller spills the full output first and
+    names the gaps, so nothing is dropped without a pointer back to it.
     """
-    lines = text.splitlines()
-    n = len(lines)
-
-    # A file the model asked to read is never cut, by any tier. This goes first
-    # because `cat f; grep …` would otherwise hit the grep tier and keep the
-    # first 80 lines — the file's head, not the matches.
+    # Where exact text matters — a file the model asked for, a diff, a blame —
+    # a digest is wrong however good it is. Checked first, before any size test.
     if _is_file_read(tool_name, command):
         return None, "", []
-
-    # grep/search output IS already the matches — keep the first block, count the rest.
-    if tool_name == "Bash" and _GREP.search(command or ""):
-        cap = 80
-        if n <= cap:
-            return None, "", []
-        kept = lines[:cap]
-        return ("\n".join(kept) + _footer(n, f"first {cap} matches shown, {n - cap} more — "
-                "narrow the pattern or add a path to see specific ones"),
-                "grep-matches", [(1, cap)])
-
-    # test/build output — keep the failure lines plus head and tail (the summary).
-    if tool_name == "Bash" and _TESTY.search(command or ""):
-        fail_at = [i for i, ln in enumerate(lines) if _FAIL.search(ln)]
-        if fail_at and len(fail_at) < n * 0.5:  # a mostly-passing run with some failures
-            head, tail = lines[:8], lines[-8:]
-            body_at = fail_at[:120]
-            body = [lines[i] for i in body_at]
-            digest = ("\n".join(head)
-                      + f"\n… [showing {len(body)} of {len(fail_at)} error/fail lines] …\n"
-                      + "\n".join(body) + "\n… [tail] …\n" + "\n".join(tail)
-                      + _footer(n, "re-run the command for the full log"))
-            if approx_tokens(digest) < approx_tokens(text):
-                kept = [(1, min(8, n))] + [(i + 1, i + 1) for i in body_at]
-                kept.append((max(1, n - 7), n))
-                return digest, "errors", sorted(kept)
-
-    # generic large COMMAND output (a build, a log, a listing) — head + tail with
-    # the middle elided. A file read never reaches here: see the top of this function.
-    if n > 220:
-        digest, kept = _head_tail(
-            text, head=120, tail=60,
-            hint="re-run with a range/filter, or Read specific lines, for the middle")
-        return digest, "head-tail", kept
-    return None, "", []
+    if approx_tokens(text) < MIN_CONDENSE_TOKENS:
+        return None, "", []
+    lines = text.splitlines()
+    if len(lines) <= HEAD_LINES + TAIL_LINES:
+        return None, "", []      # one enormous line: clipping it is not condensing it
+    kept = select_lines(lines)
+    if len(kept) >= len(lines):
+        return None, "", []
+    digest = _render(lines, kept) + _footer(len(lines), "the full output is saved; see below")
+    return digest, "select", _ranges(kept)
 
 
 def worker_available() -> bool:
@@ -211,6 +311,12 @@ def condense(text: str, *, tool_name: str = "", command: str = "",
               "kept_ranges": [(1, total_lines)] if total_lines else []}
 
     digest, method, kept = deterministic_condense(text, tool_name, command)
+    # Grep is measured and never changed: whether a digest of search results
+    # loses the match someone needed is a question for fleet data, not for a
+    # rule. So the report can still say what it WOULD have saved.
+    if tool_name == "Grep":
+        result["would_reduce"] = digest is not None and approx_tokens(digest) < raw_tok
+        return result
     if digest is not None and approx_tokens(digest) < raw_tok:
         result.update(digest=digest, digest_tokens=approx_tokens(digest),
                       method=method, reduced=True, kept_ranges=kept)

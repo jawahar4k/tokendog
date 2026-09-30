@@ -1,45 +1,61 @@
-"""Tool-output condenser — deterministic tiers + safety caps."""
-from tokendog.condense import condense, deterministic_condense
+"""Tool-output condenser — one selection rule, safety caps, and what it never touches."""
+import pytest
+
 from tokendog.approx import approx_tokens
+from tokendog.condense import MIN_CONDENSE_TOKENS, condense, deterministic_condense
 
 
-def test_grep_output_keeps_first_matches_and_counts_rest():
-    text = "\n".join(f"src/f{i}.ts:{i}: match here" for i in range(300))
+def _biglog(n=3_000):
+    """Clears the 8k-token floor, which lines alone do not: 600 short lines is ~2k tokens."""
+    return "\n".join(f"[{i:05d}] worker processed batch {i} in {100 + (i * 37) % 900}ms"
+                     for i in range(n))
+
+
+def _bigfile(n=3_000):
+    """A file-shaped payload well over the floor, so a guard test fails on the
+    guard and not on the size check."""
+    text = "\n".join(f"line {i}: something unique about this particular line" for i in range(n))
+    assert approx_tokens(text) >= MIN_CONDENSE_TOKENS, "fixture must clear the floor"
+    return text
+
+
+def test_grep_in_bash_is_command_output_and_gets_the_same_rule():
+    """One selection rule for all command output; a grep tier no longer exists."""
+    text = "\n".join(f"src/f{i}.ts:{i}: match here with some context around it" for i in range(3_000))
     digest, method, _kept = deterministic_condense(text, "Bash", "grep -rn match src/")
-    assert method == "grep-matches"
+    assert method == "select"
     assert approx_tokens(digest) < approx_tokens(text)
-    assert "more" in digest and "80 matches" in digest
 
 
 def test_small_grep_is_left_alone():
     text = "\n".join(f"m{i}" for i in range(10))
     digest, method, _kept = deterministic_condense(text, "Bash", "grep x .")
-    assert digest is None      # under cap → don't touch
+    assert digest is None      # under the floor → don't touch
 
 
 def test_test_output_keeps_failures():
-    lines = ["PASS test_a"] * 400 + ["FAIL test_b: assertion error", "E   assert 1 == 2"] + ["PASS test_c"] * 50
+    lines = ["PASS test_a ok with a reasonably long description line"] * 3_000
+    lines[1500] = "FAIL test_b: assertion error"
+    lines[1501] = "E   assert 1 == 2"
     text = "\n".join(lines)
     digest, method, _kept = deterministic_condense(text, "Bash", "pytest -q")
-    assert method == "errors"
+    assert method == "select"
     assert "FAIL test_b" in digest and "assert 1 == 2" in digest
     assert approx_tokens(digest) < approx_tokens(text)
 
 
-def test_generic_large_output_head_tail():
-    text = "\n".join(f"line {i}" for i in range(500))
-    digest, method, _kept = deterministic_condense(text, "Bash", "docker logs app")
-    assert method == "head-tail"
-    assert "elided" in digest
-    assert "line 0" in digest and "line 499" in digest
+def test_generic_large_output_keeps_head_and_tail():
+    digest, method, _kept = deterministic_condense(_biglog(), "Bash", "docker logs app")
+    assert method == "select"
+    assert "not shown" in digest
+    assert "[00000]" in digest and "[02999]" in digest
 
 
 def test_condense_never_grows_and_reports():
-    text = "\n".join(f"line {i}" for i in range(500))
-    r = condense(text, tool_name="Bash", command="npm install")
+    r = condense(_biglog(), tool_name="Bash", command="npm install")
     assert r["reduced"] is True
     assert r["digest_tokens"] < r["raw_tokens"]
-    assert r["method"] == "head-tail" and r["worker_used"] is False
+    assert r["method"] == "select" and r["worker_used"] is False
 
 
 def test_condense_leaves_small_output_untouched():
@@ -59,20 +75,18 @@ def test_worker_not_called_without_key(monkeypatch):
 
 
 def test_digest_carries_a_pointer_to_full_output():
-    text = "\n".join(f"line {i}" for i in range(500))
-    r = condense(text, tool_name="Bash", command="npm install")
+    r = condense(_biglog(), tool_name="Bash", command="npm install")
     assert "TokenDog" in r["digest"] and "lines total" in r["digest"]
 
 
 # --- a file the model asked to read is never cut in the middle -------------
 #
-# Replay over real transcripts showed 91% of head-tail's projected saving came
-# from `Read` and `cat -n path/to/file.ts`: the digest dropped the middle of a
-# source file the model had deliberately opened. Head and tail carry the story
-# of a log or a build; they carry nothing of a file. So head-tail is for command
-# output only, and a whole-file read is left alone at any size.
-
-import pytest
+# Replay over real transcripts showed 91% of the old head-tail tier's projected
+# saving came from `Read` and `cat -n path/to/file.ts`: the digest dropped the
+# middle of a source file the model had deliberately opened. So a whole-file
+# read is left alone at any size. The fixtures here are deliberately over the
+# token floor: a small fixture would pass because it is small, and the guard
+# could be deleted without a single test noticing.
 
 
 @pytest.mark.parametrize("tool,command", [
@@ -87,9 +101,8 @@ import pytest
     ("Bash", "for f in a.ts b.ts; do echo == $f; cat $f; done"),
     ("Bash", "sudo cat /var/log/x.log"),
 ])
-def test_a_whole_file_read_is_never_head_tailed(tool, command):
-    text = "\n".join(f"line {i}: something unique" for i in range(600))
-    digest, method, _kept = deterministic_condense(text, tool, command)
+def test_a_whole_file_read_is_never_condensed(tool, command):
+    digest, method, _kept = deterministic_condense(_bigfile(), tool, command)
     assert digest is None and method == ""
 
 
@@ -99,29 +112,23 @@ def test_a_whole_file_read_is_never_head_tailed(tool, command):
     "pytest -q 2>&1 | tail -300",           # a piped tail is the model capping, not reading
     "git status --porcelain; ls -R | head -400",
 ])
-def test_command_output_still_gets_head_tail(command):
-    text = "\n".join(f"line {i}" for i in range(600))
-    _, method, _kept = deterministic_condense(text, "Bash", command)
-    assert method == "head-tail"
+def test_command_output_is_condensed(command):
+    _, method, _kept = deterministic_condense(_biglog(), "Bash", command)
+    assert method == "select"
 
 
 def test_a_file_read_mixed_with_a_grep_is_left_alone():
-    """`cat f; grep …` must not hit the grep tier: it would keep the first 80
-    lines — the file's head — and drop the actual matches."""
-    text = "\n".join(f"src/f{i}.ts:{i}: match" for i in range(300))
-    digest, method, _kept = deterministic_condense(text, "Bash", 'cat src/x.ts; echo ==; grep -n "match" src/')
+    """`cat f; grep …` is still the file; cutting it would drop what was read."""
+    text = "\n".join(f"src/f{i}.ts:{i}: match here with some context around it" for i in range(3_000))
+    digest, method, _kept = deterministic_condense(
+        text, "Bash", 'cat src/x.ts; echo ==; grep -n "match" src/')
     assert digest is None and method == ""
-
-
-def test_a_pure_grep_still_condenses_as_matches():
-    text = "\n".join(f"src/f{i}.ts:{i}: match" for i in range(300))
-    _, method, _kept = deterministic_condense(text, "Bash", "grep -rn match src/")
-    assert method == "grep-matches"
 
 
 @pytest.mark.parametrize("command", ["git diff HEAD~1 -- src/", "git show abc123", "diff -u a b"])
 def test_a_diff_is_read_for_its_hunks_and_never_cut(command):
-    text = "\n".join(f"+line {i}" for i in range(600))
+    text = "\n".join(f"+line {i}: a changed line with enough text to be real" for i in range(3_000))
+    assert approx_tokens(text) >= MIN_CONDENSE_TOKENS
     digest, method, _kept = deterministic_condense(text, "Bash", command)
     assert digest is None and method == ""
 
@@ -132,20 +139,18 @@ def test_a_diff_is_read_for_its_hunks_and_never_cut(command):
 def test_every_digest_reports_which_lines_it_kept():
     """Without this the spill file is just a file: the pointer cannot say which
     ranges are missing, and the model has nothing to ask for."""
-    text = "\n".join(f"line {i}" for i in range(600))
-    r = condense(text, tool_name="Bash", command="docker logs app")
+    r = condense(_biglog(), tool_name="Bash", command="docker logs app")
     assert r["reduced"]
     assert r["kept_ranges"], "a reduced digest must say what it kept"
     for start, end in r["kept_ranges"]:
-        assert 1 <= start <= end <= 600
+        assert 1 <= start <= end <= 3_000
 
 
 def test_the_kept_ranges_cover_the_head_and_the_tail():
-    text = "\n".join(f"line {i}" for i in range(600))
-    r = condense(text, tool_name="Bash", command="docker logs app")
+    r = condense(_biglog(), tool_name="Bash", command="docker logs app")
     covered = {n for start, end in r["kept_ranges"] for n in range(start, end + 1)}
-    assert 1 in covered and 600 in covered
-    assert len(covered) < 600            # something really was left out
+    assert 1 in covered and 3_000 in covered
+    assert len(covered) < 3_000            # something really was left out
 
 
 def test_an_untouched_output_keeps_everything():
@@ -154,17 +159,14 @@ def test_an_untouched_output_keeps_everything():
     assert r["kept_ranges"] == [(1, 3)]
 
 
-def test_the_grep_tier_keeps_a_leading_block():
-    text = "\n".join(f"src/f{i}.ts:{i}: match" for i in range(300))
-    r = condense(text, tool_name="Bash", command="grep -rn match src/")
-    assert r["method"] == "grep-matches"
-    assert r["kept_ranges"] == [(1, 80)]
+def test_the_head_block_is_one_range():
+    r = condense(_biglog(), tool_name="Bash", command="docker logs app")
+    assert r["kept_ranges"][0] == (1, 30)
 
 
-def test_the_error_tier_keeps_the_lines_it_showed():
-    lines = ["PASS a"] * 400 + ["FAIL b: assertion error"] + ["PASS c"] * 50
+def test_the_kept_ranges_include_a_failure_and_what_follows_it():
+    lines = ["PASS a with a reasonably long description line"] * 3_000
+    lines[1500] = "FAIL b: assertion error"
     r = condense("\n".join(lines), tool_name="Bash", command="pytest -q")
-    assert r["method"] == "errors"
     covered = {n for start, end in r["kept_ranges"] for n in range(start, end + 1)}
-    assert 401 in covered                # the FAIL line, 1-based
-    assert 1 in covered and 451 in covered
+    assert {1501, 1502, 1503, 1504} <= covered        # 1-based: the FAIL and 3 after

@@ -335,9 +335,11 @@ def format_savings_report(d: dict) -> str:
             lines.append(f"| {tool} | {e['n']:,} | {e['saved']:,} |")
     lines.append("")
     if r["events"] == 0:
-        lines.append("_Projected only — the condenser is off, so nothing has been altered or logged. "
-                     "Set `TOKENDOG_TRUNCATE_MODE=shadow` to log real events without touching "
-                     "output, then `=enforce` to apply them._")
+        from .condense import MIN_CONDENSE_TOKENS
+        lines.append(f"_Nothing recorded. Either the condenser is off (`TOKENDOG_TRUNCATE_MODE=shadow` "
+                     f"logs without touching output), or no command output in range crossed the "
+                     f"{MIN_CONDENSE_TOKENS:,}-token floor — `TOKENDOG_CONDENSE_MIN_TOKENS` lowers "
+                     f"it. `tokendog doctor` shows which._")
     else:
         modes = ", ".join(f"{k}={v}" for k, v in sorted(r["modes"].items()))
         lines.append(f"_Recorded modes: {modes}. shadow events changed nothing; enforce events "

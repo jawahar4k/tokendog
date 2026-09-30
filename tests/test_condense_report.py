@@ -28,7 +28,7 @@ def _write(path, records):
 def test_projection_credits_reread_weighted_saving(tmp_path):
     proj_dir = tmp_path / "projects" / "-Users-x-projects-demo"
     proj_dir.mkdir(parents=True)
-    big = "\n".join(f"src/f{i}.ts:{i}: TODO" for i in range(400))  # grep dump, condensable
+    big = "\n".join(f"[{i:05d}] worker processed batch {i} in {100 + (i * 37) % 900}ms" for i in range(3_000))  # over the 8k-token floor, condensable
     recs = [
         {"cwd": "/Users/x/projects/demo"},
         _turn("2026-01-01T00:00:00Z", 1000, [("t1", "Bash", "grep -rn TODO src/")]),
@@ -94,7 +94,7 @@ def test_dropped_lines_is_empty_when_nothing_went_missing():
 def test_replay_returns_real_cases_worst_first(tmp_path):
     """A savings total cannot show whether the dropped lines mattered; this can."""
     from tokendog.condense_report import replay
-    big = "\n".join(f"line {i} of a long log" for i in range(900))
+    big = "\n".join(f"[{i:05d}] worker processed batch {i} in {100 + (i * 37) % 900}ms" for i in range(3_000))
     small = "\n".join(f"row {i}" for i in range(400))
     root = _write_transcript(tmp_path, big, small)
 
@@ -110,5 +110,5 @@ def test_replay_returns_real_cases_worst_first(tmp_path):
 
 def test_replay_limit_is_respected(tmp_path):
     from tokendog.condense_report import replay
-    root = _write_transcript(tmp_path, *["\n".join(f"line {i}" for i in range(900))] * 3)
+    root = _write_transcript(tmp_path, *["\n".join(f"[{i:05d}] worker processed batch {i} in {100 + (i * 37) % 900}ms" for i in range(3_000))] * 3)
     assert len(replay(root, limit=1)["cases"]) == 1

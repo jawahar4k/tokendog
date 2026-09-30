@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-09-30
+
+### Changed — condenser selection (port notes §5)
+- **One selection rule replaces the three tiers.** Keeps the first 30 and last 60 lines verbatim,
+  then every problem line (error, fail, warn, exception, traceback, denied, timeout, not found, ✗)
+  with the three lines after it and up to 20 stack frames, inside a 5,000-token signal budget —
+  which is what stops a log where every line says "error" from turning back into the input.
+- Middle lines that differ only in numbers or hashes collapse to one line and `×N`; head and tail
+  stay exact. Lines over 2,000 characters are clipped in the digest; the spill has them whole.
+- **Floor is 8,000 tokens, not 220 lines.** Lines are the wrong unit.
+- **Grep tool output is measured and never changed**, until fleet data says it is safe.
+- `jq`, `git blame`, `git log -p` and `gh pr diff` join the commands that are never condensed.
+- Every constant has an override (`TOKENDOG_CONDENSE_MIN_TOKENS` and friends); unset, non-numeric
+  or negative means default, and 0 stays valid.
+
+### Measured
+- On one real workload the ported rules find almost nothing to do: in seven days one Bash command
+  output crossed 8K tokens (p90 was 5K), while 390 file reads crossed 2K. The read guard, not the
+  condenser, is the lever for that workload. `tokendog savings` now says which of those two
+  reasons explains a zero, instead of claiming the condenser is off.
+
+### Testing
+- The file-read guard's tests used fixtures under the new floor, so they would have passed with
+  the guard deleted. They are now over the floor; removing the guard fails 14 of them.
+
 ## [0.7.0] — 2026-09-30
 
 ### Added — statusline
