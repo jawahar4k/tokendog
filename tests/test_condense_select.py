@@ -159,7 +159,7 @@ def test_kept_ranges_still_describe_the_digest():
 
 
 def test_the_floor_can_be_lowered_for_a_workload_with_smaller_outputs(monkeypatch):
-    """8k is ORBIT's measured choice for its fleet. On a workload whose p90
+    """8k was measured on one team's fleet. On a workload whose p90
     command output is 5k, the condenser has nothing to do at that floor; the
     reader needs a way to try a lower one without editing code."""
     import importlib

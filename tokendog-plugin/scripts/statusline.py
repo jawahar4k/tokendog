@@ -53,6 +53,7 @@ RED = "\033[31m"
 YEL = "\033[33m"
 GRN = "\033[32m"
 CYA = "\033[36m"
+MAG = "\033[35m"
 BLD = "\033[1m"
 OFF = "\033[0m"
 
@@ -79,14 +80,14 @@ def human(n: float | None) -> str:
     if n < 1_000:
         return f"{n:.0f}"
     if n < 1_000_000:
-        return f"{n / 1_000:.0f}K"
+        return f"{n / 1_000:.0f}k"
     return f"{n / 1_000_000:.2f}M"
 
 
 def window_label(size: int | None) -> str:
     if not size:
         return "?"
-    return "1M" if size >= 1_000_000 else f"{size // 1000}K"
+    return "1M" if size >= 1_000_000 else f"{size // 1000}k"
 
 
 def dig(obj, *path, default=None):
@@ -199,12 +200,28 @@ def read_split(payload: dict) -> dict | None:
     return split if isinstance(split, dict) else None
 
 
-def split_segment(payload: dict) -> str | None:
-    """`setup 70K (sys 26K · mcp 31K · skills 13K) · work 95K`.
+def _setup_parts(setup: dict, keys=("sys", "mcp", "skills", "agents")) -> list[str]:
+    # Parts under 500 tokens are noise on a one-line statusline.
+    return [f"{k} {human(setup[k])}" for k in keys if int(setup.get(k) or 0) >= 500]
 
-    The two halves answer different questions: setup shrinks only by disabling
-    something and is re-injected by /clear, work shrinks only by /clear. Showing
-    them apart is the whole point — a single percentage cannot say which.
+
+def _setup_text(total: int, parts: list[str]) -> str:
+    """`setup 75k` plus the parts, dimmed, in brackets and separated by commas.
+
+    Commas, not ` · `: the dot separates segments, and reusing it inside one
+    reads as four segments where there is one.
+    """
+    head = paint(f"setup {human(total)}", MAG)
+    return head + (paint(" (" + ", ".join(parts) + ")", DIM) if parts else "")
+
+
+def split_segment(payload: dict) -> str | None:
+    """`setup 75k (sys 34k, mcp 21k, skills 14k, agents 6k)`.
+
+    Setup is what a percentage cannot show: the part of the window re-sent on
+    every turn that only disabling something shrinks, and `/clear` re-injects.
+    The work half still decides the `/clear` hint; printed, it did not change
+    what anyone did, so it is not.
     """
     if str(os.environ.get("TOKENDOG_STATUSLINE_SPLIT", "1")).strip().lower() in (
             "0", "false", "no", "off"):
@@ -212,21 +229,11 @@ def split_segment(payload: dict) -> str | None:
     split = read_split(payload)
     if not split:
         return None
-    setup, work = split.get("setup") or {}, split.get("work") or {}
-    setup_total, work_total = int(split.get("setup_total") or 0), int(split.get("work_total") or 0)
-    if not setup_total and not work_total:
+    setup = split.get("setup") or {}
+    total = int(split.get("setup_total") or 0)
+    if not total:
         return None
-    # Parts under this are noise on a one-line statusline: knowing the subagent
-    # listing costs 300 tokens changes nothing anyone would do.
-    NAMED = (("sys", "sys"), ("mcp", "mcp"), ("skills", "skills"), ("agents", "agents"))
-    parts = [f"{label} {human(setup[key])}" for key, label in NAMED
-             if int(setup.get(key) or 0) >= 500]
-    text = f"setup {human(setup_total)}"
-    if parts:
-        text += " (" + " · ".join(parts) + ")"
-    text += f" · work {human(work_total)}"
-    return paint(text, grade(float(setup_total), SETUP_ALARM, SETUP_ALARM * 2)
-                 if setup_total >= SETUP_ALARM else DIM)
+    return _setup_text(total, _setup_parts(setup))
 
 
 def lever_hint(payload: dict) -> str | None:
@@ -362,7 +369,7 @@ def where_segment(payload: dict) -> str | None:
     branch = dig(payload, "worktree", "branch")
     if not (isinstance(branch, str) and _SAFE_REF.match(branch)):
         branch = git_branch(cwd)
-    text = folder + (f" ⎇ {branch}" if branch else "")
+    text = folder + (f":{branch}" if branch else "")
     return paint(text, CYA)
 
 
@@ -418,6 +425,60 @@ def spend_segment(payload: dict) -> str | None:
     if pct is None or pct < SPEND_WARN:
         return None
     return paint(f"spend {pct:.0f}%", RED if pct >= SPEND_ALARM else YEL)
+
+
+# --- context bar ---------------------------------------------------------------
+
+BAR_CELLS = 6
+BAR_WARN, BAR_ALARM = 50.0, 80.0
+
+
+def ctx_bar(pct: float) -> str:
+    """`▓▓░░░░` — how full the window is, at a glance. Green, yellow, red."""
+    pct = max(0.0, min(100.0, float(pct)))
+    filled = min(BAR_CELLS, round(pct / 100 * BAR_CELLS))
+    colour = GRN if pct < BAR_WARN else YEL if pct < BAR_ALARM else RED
+    return paint("▓" * filled, colour) + paint("░" * (BAR_CELLS - filled), DIM)
+
+
+# --- lessons -------------------------------------------------------------------
+
+
+def _ago(ms) -> str | None:
+    at = _epoch_s(ms)
+    if not at:
+        return None
+    secs = max(0, time.time() - at)
+    if secs < 3600:
+        return f"{max(1, int(secs // 60))}m ago"
+    if secs < 86_400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86_400)}d ago"
+
+
+def lessons_segment(payload: dict) -> str | None:
+    """What session learning did last, in this repo. Hidden where it never ran.
+
+    A failed capture is shown, not hidden: one that fails silently looks
+    exactly like one that found nothing.
+    """
+    cwd = dig(payload, "workspace", "current_dir") or payload.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        return None
+    st = _read_json(os.path.join(cwd, ".claude", "learnings", "_local", ".status.json"))
+    if not isinstance(st, dict):
+        return None
+    ago = _ago(st.get("at"))
+    when = f" ({ago})" if ago else ""
+    state = st.get("state")
+    if state == "running":
+        return paint("learning…", DIM)
+    if state == "failed":
+        return paint(f"lesson capture failed{when}", YEL)
+    added = int(num(st.get("added")) or 0)
+    if added > 0:
+        return paint(f"learned {added} lesson{'s' if added != 1 else ''}{when}", GRN)
+    return paint(f"no new lessons{when}", DIM)
 
 
 # --- band ----------------------------------------------------------------------
@@ -648,76 +709,64 @@ def terminal_cols() -> int:
 
 
 def _split_seg(payload: dict) -> Seg | None:
-    """The split, with its reductions: full → shrinkable-only → largest → total."""
+    """Setup, with its reductions: every part → the shrinkable ones → the
+    largest → just the total → gone. `sys` goes first because the reader
+    cannot shrink it; the parts they can act on are the last to drop."""
     text = split_segment(payload)
     if not text:
         return None
     split = read_split(payload) or {}
     setup = split.get("setup") or {}
-    setup_total = int(split.get("setup_total") or 0)
-    work_total = int(split.get("work_total") or 0)
-    colour = grade(float(setup_total), SETUP_ALARM, SETUP_ALARM * 2) if setup_total >= SETUP_ALARM else DIM
-    # sys is not shrinkable by the reader; mcp/skills/agents are, by disabling.
-    shrinkable = [(k, int(setup.get(k) or 0)) for k in ("mcp", "skills", "agents")
-                  if int(setup.get(k) or 0) >= 500]
+    total = int(split.get("setup_total") or 0)
     red = []
+    shrinkable = _setup_parts(setup, ("mcp", "skills", "agents"))
     if shrinkable:
-        red.append((30, paint(f"setup {human(setup_total)} ("
-                              + " · ".join(f"{k} {human(v)}" for k, v in shrinkable)
-                              + f") · work {human(work_total)}", colour)))
-        big = max(shrinkable, key=lambda kv: kv[1])
-        red.append((40, paint(f"setup {human(setup_total)} ({big[0]} {human(big[1])})"
-                              f" · work {human(work_total)}", colour)))
-    red.append((50, paint(f"setup {human(setup_total)} · work {human(work_total)}", colour)))
+        red.append((30, _setup_text(total, shrinkable)))
+        big = max(("mcp", "skills", "agents"), key=lambda k: int(setup.get(k) or 0))
+        red.append((40, _setup_text(total, _setup_parts(setup, (big,)))))
+    red.append((50, _setup_text(total, [])))
     red.append((70, None))
     return Seg(text, red)
 
 
-def build(payload: dict) -> str:
-    segs: list[Seg | None] = []
+def _ctx_seg(payload: dict, used: int | None) -> Seg | None:
+    """`ctx 365k/1M ▓▓░░░░ 37%`, and `/compact` from 80% full."""
+    if used is None:
+        return None
+    size = num(dig(payload, "context_window", "context_window_size"))
+    pct = num(dig(payload, "context_window", "used_percentage"))
+    if pct is None and size:
+        pct = used / size * 100
+    base = paint(f"ctx {human(used)}/{window_label(int(size) if size else None)}", BLD)
+    if pct is None:
+        return Seg(base, [])
+    full = f"{base} {ctx_bar(pct)} {pct:.0f}%"
+    if pct >= BAR_ALARM:
+        full += " " + paint("/compact", RED)
+    return Seg(full, [(35, f"{base} {pct:.0f}%" + (" " + paint("/compact", RED) if pct >= BAR_ALARM else ""))])
 
-    where = where_segment(payload)
-    if where:
-        # Folder alone first; the branch is the first thing worth losing.
-        folder_only = paint(_ANSI.sub("", where).split(" ⎇ ")[0], CYA)
-        segs.append(Seg(where, [(20, folder_only), (60, None)]))
+
+def build(payload: dict) -> str:
+    """mark · model · folder:branch · ctx ▓▓░░ % · setup (…) · cache · lessons · ≈$"""
+    segs: list[Seg | None] = []
 
     model = dig(payload, "model", "display_name") or dig(payload, "model", "id")
     if model:
         label = str(model) + ("⚡" if payload.get("fast_mode") else "")
         segs.append(Seg(paint(label, BLD), [(25, None)]))
 
-    # Context occupancy — the headline, and never dropped. Absolute tokens
-    # first: that is the number that multiplies into every later call.
+    where = where_segment(payload)
+    if where:
+        folder_only = paint(_ANSI.sub("", where).split(":")[0], CYA)
+        segs.append(Seg(where, [(20, folder_only), (60, None)]))
+
     used = occupancy(payload)
-    size = num(dig(payload, "context_window", "context_window_size"))
-    if used is not None:
-        colour = grade(float(used), CTX_WARN, CTX_ALARM)
-        base = f"ctx {human(used)}/{window_label(int(size) if size else None)}"
-        pct = num(dig(payload, "context_window", "used_percentage"))
-        band = band_of(used)
-        full = base + (f" {pct:.0f}%" if pct is not None else "") + (f" [{band}]" if band else "")
-        segs.append(Seg(paint(full, colour), [(35, paint(base, colour))]))
-
-    age_ms = num(dig(payload, "cost", "total_duration_ms"))
-    if age_ms and age_ms / 3_600_000 >= 1:
-        hours = age_ms / 3_600_000
-        segs.append(Seg(paint(f"age {hours:.1f}h", grade(hours, AGE_WARN_H, AGE_ALARM_H)),
-                        [(15, None)]))
-
-    for key, label in (("five_hour", "5h"), ("seven_day", "7d")):
-        seg = limit_segment(payload, key, label)
-        if seg:
-            segs.append(Seg(seg, [(45, None)]))
+    segs.append(_ctx_seg(payload, used))
 
     # An org spend limit past 75% never drops: it is the one that ends the day.
     sp = spend_segment(payload)
     if sp:
         segs.append(Seg(sp, []))
-
-    cs = cache_segment(payload)
-    if cs:
-        segs.append(Seg(cs, [(55, None)]))
 
     spl = _split_seg(payload)
     if spl:
@@ -726,6 +775,14 @@ def build(payload: dict) -> str:
         flr = floor_segment()
         if flr:
             segs.append(Seg(flr, [(10, None)]))
+
+    cs = cache_segment(payload)
+    if cs:
+        segs.append(Seg(cs, [(55, None)]))
+
+    ls = lessons_segment(payload)
+    if ls:
+        segs.append(Seg(ls, [(15, None)]))
 
     sv = savings_segment(payload)
     if sv:
@@ -739,18 +796,11 @@ def build(payload: dict) -> str:
     if up:
         segs.append(Seg(up, [(8, None)]))
 
-    # One actionable verb, and only when something is actually wrong — a nudge
-    # that fires constantly is a nudge nobody reads. The split knows which half
-    # is heavy, so it names the lever that works; occupancy is the fallback.
+    # One verb, only when the history is what is heavy: /clear and /compact
+    # remove history and nothing else. The 80% prompt already sits on ctx.
     hint = lever_hint(payload)
-    if not hint:
-        if used is not None and used >= CTX_ALARM:
-            hint = "→ /clear"
-        elif used is not None and used >= CTX_WARN:
-            hint = "→ /compact"
-        elif age_ms and age_ms / 3_600_000 >= AGE_ALARM_H:
-            hint = "→ stale, /clear"
-    if hint:
+    pct = num(dig(payload, "context_window", "used_percentage"))
+    if hint and not (pct is not None and pct >= BAR_ALARM and "compact" in hint):
         segs.append(Seg(paint(hint, RED if "clear" in hint else YEL), []))
 
     line = fit([s for s in segs if s], terminal_cols())

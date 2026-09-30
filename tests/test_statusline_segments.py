@@ -128,7 +128,7 @@ def test_a_cold_cache_names_what_the_next_turn_rewrites():
     mod = _load()
     seg = plain(mod.cache_segment({"prompt_cache": {"warm": False,
                                                     "recache_tokens_if_cold": 180_000}}))
-    assert "cold" in seg and "180K" in seg
+    assert "cold" in seg and "180k" in seg
 
 
 def test_a_recent_rebuild_is_reported_once_it_is_worth_mentioning():
@@ -138,7 +138,7 @@ def test_a_recent_rebuild_is_reported_once_it_is_worth_mentioning():
     seg = plain(mod.cache_segment({"prompt_cache": {
         "warm": True, "last_miss_at": (now - 120) * 1000, "miss_recache_tokens": 90_000}},
         now=now))
-    assert "rebuilt" in seg and "90K" in seg
+    assert "rebuilt" in seg and "90k" in seg
 
 
 def test_an_old_or_small_rebuild_is_not_news():
@@ -263,8 +263,7 @@ def test_build_puts_where_first_and_never_throws(tmp_path):
                                                "context_window_size": 1_000_000,
                                                "used_percentage": 25},
                             "cost": {"total_cost_usd": 4.2}}))
-    assert "repo" in line and "main" in line
-    assert "200-400k" in line
+    assert "repo:main" in line
     assert "≈$4.20" in line
 
 

@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-09-30
+
+### Changed — statusline, after use
+- Reads `model · folder:branch · ctx 365k/1M ▓▓░░░░ 37% · setup 76k (sys 34k, mcp 21k, skills 14k,
+  agents 6k) · cache · lessons · ≈$`.
+- **Removed:** session age, the 5-hour and 7-day windows, and the work total. None of them changed
+  what anyone did next. The work half still drives the `/clear or /compact` hint; it just is not
+  printed.
+- **Added:** a six-cell context bar, green under 50%, yellow under 80%, red above, with `/compact`
+  from 80%; and a lessons segment that says what session learning last did in this repo, hidden
+  where it never ran and visible when it failed.
+- Setup parts sit in brackets separated by commas — the dot is the segment separator, and reusing
+  it inside one segment read as four. Counts use a lowercase `k`; the branch joins with a colon.
+
 ## [0.8.0] — 2026-09-30
 
 ### Changed — condenser selection (port notes §5)

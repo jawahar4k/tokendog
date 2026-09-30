@@ -42,12 +42,12 @@ def test_the_segment_names_the_parts_worth_naming(home):
            setup={"sys": 26_000, "mcp": 31_000, "skills": 13_000, "agents": 300},
            work={"tools": 90_000, "chat": 5_000, "other": 0,
                  "mcp_results": 0, "skill_results": 0})
-    seg = mod.split_segment({"session_id": SESSION})
-    assert "setup 70K" in seg
-    assert "sys 26K" in seg and "mcp 31K" in seg and "skills 13K" in seg
-    # Parts too small to act on are noise in a one-line statusline.
-    assert "agents" not in seg
-    assert "work 95K" in seg
+    import re
+    seg = re.sub(r"\x1b\[[0-9;]*m", "", mod.split_segment({"session_id": SESSION}))
+    assert seg == "setup 70k (sys 26k, mcp 31k, skills 13k)"
+    # Parts too small to act on are noise in a one-line statusline, and the
+    # work half drives the hint but is not printed.
+    assert "agents" not in seg and "work" not in seg
 
 
 def test_no_cache_means_no_segment_not_a_crash(home):

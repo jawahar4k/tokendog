@@ -69,7 +69,7 @@ def _env_int(name: str, default: int) -> int:
     return default if value < 0 else value
 
 
-# Every tunable has an override. These are ORBIT's measured values for its
+# Every tunable has an override. These defaults were measured on one team's
 # fleet; on a workload whose p90 command output is 5k tokens, an 8k floor means
 # the condenser never runs, and the reader should be able to find that out.
 MIN_CONDENSE_TOKENS = _env_int("TOKENDOG_CONDENSE_MIN_TOKENS", 8_000)
