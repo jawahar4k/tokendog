@@ -612,13 +612,51 @@ def _iso_epoch(value: str) -> float | None:
         return None
 
 
+RELOAD_SCAN_BYTES = 8 * 1024 * 1024
+
+
+def last_reload(transcript: str | None) -> float | None:
+    """When `/reload-plugins` last ran in this session, from the transcript tail.
+
+    Matches only the harness's own record of it — a `system` / `local_command`
+    whose output starts `Reloaded:` — never text that merely mentions the
+    command, which an assistant reply can easily do. Reads the tail only, and
+    only when a restart notice would otherwise be shown.
+    """
+    if not isinstance(transcript, str) or not transcript:
+        return None
+    try:
+        size = os.path.getsize(transcript)
+        with open(transcript, "rb") as fh:
+            fh.seek(max(0, size - RELOAD_SCAN_BYTES))
+            tail = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    latest = None
+    for line in tail.splitlines():
+        if "local_command" not in line or "Reloaded:" not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if (rec.get("type") == "system" and rec.get("subtype") == "local_command"
+                and str(rec.get("content", "")).startswith("<local-command-stdout>Reloaded:")):
+            at = _iso_epoch(str(rec.get("timestamp") or ""))
+            if at and (latest is None or at > latest):
+                latest = at
+    return latest
+
+
 def update_segment(*, home: str | None = None, use_cache: bool = True,
-                   session_age_s: float | None = None) -> str | None:
+                   session_age_s: float | None = None,
+                   transcript: str | None = None) -> str | None:
     """One of two notices, or nothing:
 
       `v0.10.1→0.10.2 /plugin update`       the installed copy is behind its source
-      `0.10.2 installed, restart to load it` it is current, but THIS window
-                                             loaded its hooks before the update
+      `0.10.2 installed, /reload-plugins`    it is current, but THIS window loaded
+                                             its hooks before the update, and has
+                                             not reloaded since
 
     The second is the one that matters day to day: updating a plugin does not
     reach a session that is already open, and nothing else on screen says so.
@@ -653,7 +691,12 @@ def update_segment(*, home: str | None = None, use_cache: bool = True,
         return paint(f"v{installed}→{available} /plugin update", YEL)
     installed_at = _iso_epoch(updated_at)
     if session_age_s and installed_at and installed_at > time.time() - session_age_s:
-        return paint(f"{installed} installed, restart to load it", YEL)
+        # `/reload-plugins` loads it without a restart, so the session's start
+        # time never moves; the reload itself is the evidence it is loaded.
+        reloaded = last_reload(transcript)
+        if reloaded and reloaded >= installed_at:
+            return None
+        return paint(f"{installed} installed, /reload-plugins to load it", YEL)
     return None
 
 
@@ -859,7 +902,8 @@ def build(payload: dict) -> str:
         segs.append(Seg(paint(cost_text(spend), DIM), [(18, None)]))
 
     age_ms = num(dig(payload, "cost", "total_duration_ms"))
-    up = update_segment(session_age_s=age_ms / 1000 if age_ms else None)
+    up = update_segment(session_age_s=age_ms / 1000 if age_ms else None,
+                        transcript=payload.get("transcript_path"))
     if up:
         segs.append(Seg(up, [(8, None)]))
 

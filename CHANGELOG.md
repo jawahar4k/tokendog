@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] — 2026-09-30
+
+### Fixed
+- **The restart notice stayed up after `/reload-plugins`.** It compared the install time with the
+  session's start, and a reload loads the update without restarting, so the start never moves.
+  It now also reads when `/reload-plugins` last ran, from the transcript tail, and clears once a
+  reload follows the install. It matches only the harness's own record of the command, never text
+  that merely mentions it — an assistant reply easily can.
+- The notice says `/reload-plugins to load it`: a reload keeps the session; a restart does not.
+
 ## [0.10.3] — 2026-09-30
 
 ### Added

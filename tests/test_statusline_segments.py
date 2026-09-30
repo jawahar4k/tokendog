@@ -373,7 +373,7 @@ def test_a_session_older_than_the_install_is_told_to_restart(tmp_path):
     home = _updated(tmp_path, "0.10.2", "0.10.2", updated_ago_s=300)
     seg = plain(mod.update_segment(home=home, use_cache=False,
                                    session_age_s=3_600))
-    assert seg == "0.10.2 installed, restart to load it"
+    assert seg == "0.10.2 installed, /reload-plugins to load it"
 
 
 def test_a_session_started_after_the_install_is_current(tmp_path):
@@ -402,4 +402,56 @@ def test_build_passes_the_session_age_through(tmp_path, monkeypatch):
                         lambda p: str(home) if p == "~" else p.replace("~", str(home), 1))
     monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path / "state2"))
     line = plain(mod.build({"cost": {"total_duration_ms": 3_600_000}}))
-    assert "restart to load it" in line
+    assert "/reload-plugins to load it" in line
+
+
+# --- a /reload-plugins after the install means it is loaded --------------------
+
+
+def _reload_transcript(tmp_path, *, reload_ago_s, quote_only=False):
+    from datetime import datetime, timedelta, timezone
+    ts = (datetime.now(timezone.utc) - timedelta(seconds=reload_ago_s)).isoformat().replace("+00:00", "Z")
+    recs = [{"type": "user", "timestamp": ts, "message": {"content": "hello"}}]
+    if quote_only:
+        # Someone MENTIONING the command is not the command running.
+        recs.append({"type": "assistant", "timestamp": ts, "message": {"content": [
+            {"type": "text", "text": "run /reload-plugins; it prints <local-command-stdout>Reloaded: 8 plugins"}]}})
+    else:
+        recs.append({"type": "system", "subtype": "local_command", "timestamp": ts,
+                     "content": "<local-command-stdout>Reloaded: 8 plugins · 17 hooks</local-command-stdout>"})
+    p = tmp_path / "t.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    return str(p)
+
+
+def test_a_reload_after_the_install_clears_the_restart_notice(tmp_path):
+    """/reload-plugins loads the update without restarting, so the session's
+    start time never moves. The reload itself is the evidence."""
+    mod = _load()
+    home = _updated(tmp_path, "0.10.3", "0.10.3", updated_ago_s=300)
+    t = _reload_transcript(tmp_path, reload_ago_s=60)
+    assert mod.update_segment(home=home, use_cache=False, session_age_s=3_600,
+                              transcript=t) is None
+
+
+def test_a_reload_before_the_install_does_not_count(tmp_path):
+    mod = _load()
+    home = _updated(tmp_path, "0.10.3", "0.10.3", updated_ago_s=300)
+    t = _reload_transcript(tmp_path, reload_ago_s=900)
+    seg = plain(mod.update_segment(home=home, use_cache=False, session_age_s=3_600, transcript=t))
+    assert "/reload-plugins to load it" in seg
+
+
+def test_mentioning_the_command_is_not_running_it(tmp_path):
+    mod = _load()
+    home = _updated(tmp_path, "0.10.3", "0.10.3", updated_ago_s=300)
+    t = _reload_transcript(tmp_path, reload_ago_s=60, quote_only=True)
+    seg = plain(mod.update_segment(home=home, use_cache=False, session_age_s=3_600, transcript=t))
+    assert "/reload-plugins to load it" in seg
+
+
+def test_the_notice_now_says_reload_is_enough(tmp_path):
+    mod = _load()
+    home = _updated(tmp_path, "0.10.3", "0.10.3", updated_ago_s=300)
+    seg = plain(mod.update_segment(home=home, use_cache=False, session_age_s=3_600))
+    assert "/reload-plugins" in seg
