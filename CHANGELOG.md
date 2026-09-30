@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-09-30
+
+### Added — statusline
+- **Folder and branch**, `acme-api ⎇ main`. The folder is the basename, never the path. The branch
+  comes from the payload or is read from `.git/HEAD` without running git, following a worktree's
+  `gitdir:` pointer and showing a short SHA when detached. A branch name that is not plainly a ref
+  is refused, since HEAD is writable by anyone with repo access and this prints to a terminal.
+- **Cache state, silent when healthy.** Speaks only when the next turn will re-cache (`cache cold:
+  next turn re-caches 285K`), when a large rebuild just happened, or in the last ten minutes
+  before expiry.
+- **Org spend limit** from `rate_limits.spend_limit`, from 75%; never dropped once shown.
+- **Context band** on the ctx segment, pinned by test to `tokendog bands` so the two agree.
+- **`≈$`**, because the figure is a list-price estimate, and whole dollars from $99.995.
+- **Width fitting.** Each segment declares how it can shorten; reductions apply in one global
+  order, least useful first, so the verb at the end of the line outlives the trivia in the middle.
+  Width comes from an ancestor's tty, or `TOKENDOG_STATUSLINE_COLS` / `COLUMNS`; unknown width
+  reduces nothing.
+- **Update notice**, `v0.6.0→0.7.0 /plugin update`, only when the installed plugin is behind its
+  marketplace source. Two local files, no network, cached for a minute. Versions are compared only
+  like with like and refused if they are not plainly versions.
+
+### Changed
+- The statusline never throws: its last resort is the bare mark, not a traceback per keystroke.
+
 ## [0.6.0] — 2026-09-29
 
 ### Added

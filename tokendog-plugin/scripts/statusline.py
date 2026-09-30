@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+import time
 
 # The brand mark, shown before the figures so the line is identifiable at a
 # glance among other statusline output. Override with TOKENDOG_STATUSLINE_TAG
@@ -286,77 +287,475 @@ def limit_segment(payload: dict, key: str, label: str) -> str | None:
     return paint(f"{label} {pct:.0f}%", grade(pct, LIMIT_WARN, LIMIT_ALARM))
 
 
+# --- where: folder and branch -------------------------------------------------
+
+# A branch name is text from a file anyone with write access to the repo can
+# edit, and this line goes straight to a terminal. Anything outside this set is
+# refused rather than escaped: a refused name is a missing segment, a
+# mis-escaped one is a terminal someone else is driving.
+_SAFE_REF = re.compile(r"^[A-Za-z0-9._/+@-]{1,120}$")
+
+
+def _git_dir(start: str) -> str | None:
+    """The git directory for `start`, walking up; following a worktree pointer.
+
+    In a normal checkout `.git` is a directory. In a worktree it is a FILE that
+    says `gitdir: <path>`, relative to the worktree when not absolute.
+    """
+    d = os.path.abspath(start)
+    for _ in range(64):
+        cand = os.path.join(d, ".git")
+        if os.path.isdir(cand):
+            return cand
+        if os.path.isfile(cand):
+            try:
+                with open(cand, encoding="utf-8", errors="replace") as fh:
+                    line = fh.readline().strip()
+            except OSError:
+                return None
+            if line.startswith("gitdir:"):
+                target = line[len("gitdir:"):].strip()
+                return target if os.path.isabs(target) else os.path.normpath(os.path.join(d, target))
+            return None
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+    return None
+
+
+def git_branch(start: str | None) -> str | None:
+    """The current branch, or a short SHA when detached — by reading one file.
+
+    No `git` subprocess: this runs on every keystroke, and in a large repo a
+    subprocess per render is a visible lag.
+    """
+    if not start:
+        return None
+    gd = _git_dir(start)
+    if not gd:
+        return None
+    try:
+        with open(os.path.join(gd, "HEAD"), encoding="utf-8", errors="replace") as fh:
+            head = fh.read(512).strip()
+    except OSError:
+        return None
+    if head.startswith("ref:"):
+        ref = head[len("ref:"):].strip()
+        name = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+        return name if _SAFE_REF.match(name) else None
+    return head[:7] if re.match(r"^[0-9a-f]{7,64}$", head) else None
+
+
+def where_segment(payload: dict) -> str | None:
+    """`acme-api ⎇ main` — the folder's name, never its path, and the branch."""
+    cwd = dig(payload, "workspace", "current_dir")
+    if not isinstance(cwd, str) or not cwd:
+        cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
+    if not cwd:
+        return None
+    # Basename only: the full path leaks the home directory and, as often as
+    # not, a client's name — the same line every other surface here holds.
+    folder = os.path.basename(cwd.rstrip("/")) or cwd
+    if not _SAFE_REF.match(folder):
+        folder = re.sub(r"[^A-Za-z0-9._@+-]", "?", folder)[:60]
+    branch = dig(payload, "worktree", "branch")
+    if not (isinstance(branch, str) and _SAFE_REF.match(branch)):
+        branch = git_branch(cwd)
+    text = folder + (f" ⎇ {branch}" if branch else "")
+    return paint(text, CYA)
+
+
+# --- cache ---------------------------------------------------------------------
+
+CACHE_REBUILT_WINDOW_S = 600     # a miss older than this is not news
+CACHE_REBUILT_MIN = 50_000       # a small rebuild is not worth a segment
+CACHE_EXPIRY_WARN_S = 600        # count down only in the last ten minutes
+
+
+def _epoch_s(value) -> float | None:
+    """Timestamps arrive in ms; accept seconds too rather than guess wrong."""
+    n = num(value)
+    if n is None or n <= 0:
+        return None
+    return n / 1000.0 if n > 1e11 else n
+
+
+def cache_segment(payload: dict, *, now: float | None = None) -> str | None:
+    """Silent when healthy. Speaks only when the cache is about to cost something.
+
+    A segment that is always present is a segment nobody reads, and this one
+    matters in exactly three moments: the next turn will rewrite the prefix, the
+    last turn just did, or the prefix is about to expire.
+    """
+    pc = payload.get("prompt_cache")
+    if not isinstance(pc, dict):
+        return None
+    now = time.time() if now is None else now
+    if pc.get("warm") is False:
+        cold = num(pc.get("recache_tokens_if_cold"))
+        if cold:
+            return paint(f"cache cold: next turn re-caches {human(cold)}", YEL)
+        return paint("cache cold", YEL)
+    missed = _epoch_s(pc.get("last_miss_at"))
+    rebuilt = num(pc.get("miss_recache_tokens"))
+    if missed and rebuilt and rebuilt >= CACHE_REBUILT_MIN and 0 <= now - missed < CACHE_REBUILT_WINDOW_S:
+        return paint(f"cache rebuilt {human(rebuilt)}", YEL)
+    expires = _epoch_s(pc.get("expires_at"))
+    if expires and 0 < expires - now < CACHE_EXPIRY_WARN_S:
+        return paint(f"cache expires {max(1, round((expires - now) / 60))}m", DIM)
+    return None
+
+
+# --- spend limit ---------------------------------------------------------------
+
+SPEND_WARN, SPEND_ALARM = 75.0, 90.0
+
+
+def spend_segment(payload: dict) -> str | None:
+    """An org spend limit, when one is set and it is getting close."""
+    pct = num(dig(payload, "rate_limits", "spend_limit", "used_percentage"))
+    if pct is None or pct < SPEND_WARN:
+        return None
+    return paint(f"spend {pct:.0f}%", RED if pct >= SPEND_ALARM else YEL)
+
+
+# --- band ----------------------------------------------------------------------
+
+# Restated from tokendog.bands, because this script cannot import tokendog. A
+# test pins the two tuples equal, so the statusline and `tokendog bands` agree
+# by construction rather than by someone remembering to update both.
+BANDS = (
+    ("<50k", 0, 50_000),
+    ("50-100k", 50_000, 100_000),
+    ("100-150k", 100_000, 150_000),
+    ("150-200k", 150_000, 200_000),
+    ("200-400k", 200_000, 400_000),
+    ("400k+", 400_000, None),
+)
+
+
+def band_of(ctx: float | None) -> str | None:
+    if ctx is None:
+        return None
+    for label, lower, upper in BANDS:
+        if ctx >= lower and (upper is None or ctx < upper):
+            return label
+    return None
+
+
+# --- cost ----------------------------------------------------------------------
+
+
+def cost_text(usd: float) -> str:
+    """`≈$2.14`, or `≈$1234` once cents stop mattering.
+
+    `≈` because this is the client's list-price estimate, not an invoice — on a
+    subscription there is no per-token charge at all.
+    """
+    return f"≈${usd:.0f}" if usd >= 99.995 else f"≈${usd:.2f}"
+
+
+# --- update notice -------------------------------------------------------------
+#
+# `claude plugin update` compares the installed version with the marketplace's,
+# and the installed copy is a snapshot. Three times in this project's life the
+# installed plugin sat behind its own source with nothing saying so. This reads
+# two local files — no network, nothing fetched — and speaks only when behind.
+
+PLUGIN = "tokendog"
+UPDATE_CACHE_S = 60          # read two JSON files at most once a minute, not per key
+_SAFE_VERSION = re.compile(r"^[0-9][0-9A-Za-z.-]{0,29}$")
+
+
+def _semver(v: str):
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)", v)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def version_newer(installed: str, available: str) -> bool | None:
+    """True if `available` is newer. None when the two cannot be compared.
+
+    Only like with like: both semver, or both plain integers (the claude.ai org
+    directory versions as "0017"). Anything else returns None — no notice beats
+    a confident wrong one.
+    """
+    a, b = _semver(installed), _semver(available)
+    if a and b:
+        return b > a
+    if installed.isdigit() and available.isdigit():
+        return int(available) > int(installed)
+    return None
+
+
+def _read_json(path: str):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def _update_lookup(home: str) -> tuple[str, str] | None:
+    plugins = os.path.join(home, ".claude", "plugins")
+    inst = _read_json(os.path.join(plugins, "installed_plugins.json")) or {}
+    records = [r for key, rs in (inst.get("plugins") or {}).items()
+               if isinstance(key, str) and key.startswith(PLUGIN + "@") and isinstance(rs, list)
+               for r in rs if isinstance(r, dict)]
+    if not records:
+        return None
+    # Most recently updated, not highest version: the two version schemes do
+    # not sort against each other, and the newest record is the one in use.
+    rec = max(records, key=lambda r: str(r.get("lastUpdated") or ""))
+    installed = str(rec.get("version") or "")
+    market = str(next(k for k in (inst.get("plugins") or {})
+                      if k.startswith(PLUGIN + "@"))).split("@", 1)[1]
+    known = (_read_json(os.path.join(plugins, "known_marketplaces.json")) or {}).get(market) or {}
+    root = known.get("installLocation") or (known.get("source") or {}).get("path")
+    if not root:
+        return None
+    manifest = _read_json(os.path.join(root, ".claude-plugin", "marketplace.json")) or {}
+    entry = next((p for p in manifest.get("plugins") or []
+                  if isinstance(p, dict) and p.get("name") == PLUGIN), None)
+    available = str((entry or {}).get("version") or "")
+    return installed, available
+
+
+def update_segment(*, home: str | None = None, use_cache: bool = True) -> str | None:
+    """`v0.5.0→0.6.0 /plugin update`, only when the installed copy is behind."""
+    home = home or os.path.expanduser("~")
+    state = os.environ.get("TOKENDOG_HOME") or os.path.join(os.path.expanduser("~"), ".tokendog")
+    cache = os.path.join(state, "statusline_update.json")
+    pair = None
+    if use_cache:
+        hit = _read_json(cache)
+        if isinstance(hit, dict) and time.time() - float(hit.get("at") or 0) < UPDATE_CACHE_S:
+            pair = hit.get("pair")
+    if pair is None:
+        pair = _update_lookup(home)
+        if use_cache:
+            try:
+                os.makedirs(state, exist_ok=True)
+                with open(cache + ".tmp", "w", encoding="utf-8") as fh:
+                    json.dump({"at": time.time(), "pair": pair}, fh)
+                os.replace(cache + ".tmp", cache)
+            except OSError:
+                pass
+    if not pair or len(pair) != 2:
+        return None
+    installed, available = str(pair[0]), str(pair[1])
+    # One of these came from a file a marketplace controls, and this prints to
+    # a terminal: anything that is not plainly a version is refused.
+    if not (_SAFE_VERSION.match(installed) and _SAFE_VERSION.match(available)):
+        return None
+    if version_newer(installed, available) is not True:
+        return None
+    return paint(f"v{installed}→{available} /plugin update", YEL)
+
+
+# --- width fitting -------------------------------------------------------------
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class Seg:
+    """A segment and the ways it can get shorter.
+
+    `reductions` are (rank, shorter) pairs: `shorter` replaces the text, None
+    drops the segment. Lower rank goes first. A segment with no reductions is
+    never shortened and never dropped.
+    """
+
+    __slots__ = ("text", "reductions")
+
+    def __init__(self, text: str, reductions=()):
+        self.text = text
+        self.reductions = sorted(reductions, key=lambda r: r[0])
+
+
+def visible_len(s: str) -> int:
+    return len(_ANSI.sub("", s))
+
+
+def fit(segs, cols: int) -> str:
+    """Join, then shorten in ONE global order — least useful first — to fit.
+
+    Global matters: trimming whatever happens to be rightmost drops the verb at
+    the end of the line before the trivia in the middle. `cols` 0 means the
+    width is unknown, and an unknown width reduces nothing.
+    """
+    sep = paint(" · ", DIM)
+    live = [s for s in segs if s and s.text]
+
+    def joined():
+        return sep.join(s.text for s in live)
+
+    if cols <= 0:
+        return joined()
+    budget = max(10, cols - 4)
+    while visible_len(joined()) > budget:
+        best = None
+        for s in live:
+            if s.reductions and (best is None or s.reductions[0][0] < best.reductions[0][0]):
+                best = s
+        if best is None:
+            break
+        _rank, shorter = best.reductions.pop(0)
+        if shorter is None:
+            live.remove(best)
+        else:
+            best.text = shorter
+    return joined()
+
+
+def terminal_cols() -> int:
+    """The terminal's width, or 0 when it cannot be known.
+
+    A statusline has no tty of its own, so the width is found on an ancestor:
+    walk up to four parent processes for a tty, then ask it. Env overrides win.
+    """
+    for name in ("TOKENDOG_STATUSLINE_COLS", "COLUMNS"):
+        raw = os.environ.get(name)
+        if raw:
+            try:
+                n = int(raw)
+                if n > 0:
+                    return n
+            except ValueError:
+                pass
+    try:
+        import subprocess
+        pid = os.getppid()
+        flag = "-f" if sys.platform == "darwin" else "-F"
+        for _ in range(4):
+            if pid <= 1:
+                break
+            out = subprocess.run(["ps", "-o", "tty=,ppid=", "-p", str(pid)],
+                                 capture_output=True, text=True, timeout=0.5).stdout.split()
+            if len(out) < 2:
+                break
+            tty, ppid = out[0], out[1]
+            if tty not in ("?", "??", "-"):
+                size = subprocess.run(["stty", flag, f"/dev/{tty}", "size"],
+                                      capture_output=True, text=True, timeout=0.5).stdout.split()
+                if len(size) == 2 and size[1].isdigit():
+                    return int(size[1])
+                break
+            pid = int(ppid)
+    except Exception:
+        return 0
+    return 0
+
+
+def _split_seg(payload: dict) -> Seg | None:
+    """The split, with its reductions: full → shrinkable-only → largest → total."""
+    text = split_segment(payload)
+    if not text:
+        return None
+    split = read_split(payload) or {}
+    setup = split.get("setup") or {}
+    setup_total = int(split.get("setup_total") or 0)
+    work_total = int(split.get("work_total") or 0)
+    colour = grade(float(setup_total), SETUP_ALARM, SETUP_ALARM * 2) if setup_total >= SETUP_ALARM else DIM
+    # sys is not shrinkable by the reader; mcp/skills/agents are, by disabling.
+    shrinkable = [(k, int(setup.get(k) or 0)) for k in ("mcp", "skills", "agents")
+                  if int(setup.get(k) or 0) >= 500]
+    red = []
+    if shrinkable:
+        red.append((30, paint(f"setup {human(setup_total)} ("
+                              + " · ".join(f"{k} {human(v)}" for k, v in shrinkable)
+                              + f") · work {human(work_total)}", colour)))
+        big = max(shrinkable, key=lambda kv: kv[1])
+        red.append((40, paint(f"setup {human(setup_total)} ({big[0]} {human(big[1])})"
+                              f" · work {human(work_total)}", colour)))
+    red.append((50, paint(f"setup {human(setup_total)} · work {human(work_total)}", colour)))
+    red.append((70, None))
+    return Seg(text, red)
+
+
 def build(payload: dict) -> str:
-    segments: list[str] = []
+    segs: list[Seg | None] = []
+
+    where = where_segment(payload)
+    if where:
+        # Folder alone first; the branch is the first thing worth losing.
+        folder_only = paint(_ANSI.sub("", where).split(" ⎇ ")[0], CYA)
+        segs.append(Seg(where, [(20, folder_only), (60, None)]))
 
     model = dig(payload, "model", "display_name") or dig(payload, "model", "id")
     if model:
-        label = str(model)
-        if payload.get("fast_mode"):
-            label += "⚡"
-        segments.append(paint(label, BLD))
+        label = str(model) + ("⚡" if payload.get("fast_mode") else "")
+        segs.append(Seg(paint(label, BLD), [(25, None)]))
 
-    # Context occupancy — the headline. Absolute tokens first, percentage second:
-    # the absolute number is what multiplies into every subsequent call.
+    # Context occupancy — the headline, and never dropped. Absolute tokens
+    # first: that is the number that multiplies into every later call.
     used = occupancy(payload)
     size = num(dig(payload, "context_window", "context_window_size"))
     if used is not None:
         colour = grade(float(used), CTX_WARN, CTX_ALARM)
-        text = f"ctx {human(used)}/{window_label(int(size) if size else None)}"
+        base = f"ctx {human(used)}/{window_label(int(size) if size else None)}"
         pct = num(dig(payload, "context_window", "used_percentage"))
-        if pct is not None:
-            text += f" {pct:.0f}%"
-        segments.append(paint(text, colour))
+        band = band_of(used)
+        full = base + (f" {pct:.0f}%" if pct is not None else "") + (f" [{band}]" if band else "")
+        segs.append(Seg(paint(full, colour), [(35, paint(base, colour))]))
 
-    # Session age, from the harness's own wall-clock duration.
     age_ms = num(dig(payload, "cost", "total_duration_ms"))
-    if age_ms:
+    if age_ms and age_ms / 3_600_000 >= 1:
         hours = age_ms / 3_600_000
-        if hours >= 1:
-            segments.append(paint(f"age {hours:.1f}h", grade(hours, AGE_WARN_H, AGE_ALARM_H)))
+        segs.append(Seg(paint(f"age {hours:.1f}h", grade(hours, AGE_WARN_H, AGE_ALARM_H)),
+                        [(15, None)]))
 
     for key, label in (("five_hour", "5h"), ("seven_day", "7d")):
         seg = limit_segment(payload, key, label)
         if seg:
-            segments.append(seg)
+            segs.append(Seg(seg, [(45, None)]))
 
-    # Where the window actually went, by which lever moves it. Preferred over
-    # the static floor segment when present: it is measured from this session's
-    # own transcript rather than from what is installed on disk.
-    spl = split_segment(payload)
+    # An org spend limit past 75% never drops: it is the one that ends the day.
+    sp = spend_segment(payload)
+    if sp:
+        segs.append(Seg(sp, []))
+
+    cs = cache_segment(payload)
+    if cs:
+        segs.append(Seg(cs, [(55, None)]))
+
+    spl = _split_seg(payload)
     if spl:
-        segments.append(spl)
+        segs.append(spl)
     else:
         flr = floor_segment()
         if flr:
-            segments.append(flr)
+            segs.append(Seg(flr, [(10, None)]))
 
-    # Condenser savings for this session — present only when condensing is on.
     sv = savings_segment(payload)
     if sv:
-        segments.append(sv)
+        segs.append(Seg(sv, [(12, None)]))
 
     spend = num(dig(payload, "cost", "total_cost_usd"))
     if spend:
-        segments.append(paint(f"${spend:.2f}", DIM))
+        segs.append(Seg(paint(cost_text(spend), DIM), [(18, None)]))
 
-    # One actionable verb, and only when something is actually wrong — a nudge that
-    # fires constantly is a nudge nobody reads.
-    # The split knows which half is heavy, so it names the lever that works.
-    # Occupancy is the fallback for a session with no split cached yet.
+    up = update_segment()
+    if up:
+        segs.append(Seg(up, [(8, None)]))
+
+    # One actionable verb, and only when something is actually wrong — a nudge
+    # that fires constantly is a nudge nobody reads. The split knows which half
+    # is heavy, so it names the lever that works; occupancy is the fallback.
     hint = lever_hint(payload)
+    if not hint:
+        if used is not None and used >= CTX_ALARM:
+            hint = "→ /clear"
+        elif used is not None and used >= CTX_WARN:
+            hint = "→ /compact"
+        elif age_ms and age_ms / 3_600_000 >= AGE_ALARM_H:
+            hint = "→ stale, /clear"
     if hint:
-        pass
-    elif used is not None and used >= CTX_ALARM:
-        hint = "→ /clear"
-    elif used is not None and used >= CTX_WARN:
-        hint = "→ /compact"
-    elif age_ms and age_ms / 3_600_000 >= AGE_ALARM_H:
-        hint = "→ stale, /clear"
-    if hint:
-        segments.append(paint(hint, RED if "clear" in hint else YEL))
+        segs.append(Seg(paint(hint, RED if "clear" in hint else YEL), []))
 
-    line = paint(" · ", DIM).join(segments) if segments else paint("no session data", DIM)
+    line = fit([s for s in segs if s], terminal_cols())
+    if not line:
+        line = paint("no session data", DIM)
     # An ASCII mark is dimmed so it recedes; an emoji carries its own colour and
     # is left alone (ANSI dim on an emoji is ignored or muddies it).
     if not TAG:
@@ -366,19 +765,22 @@ def build(payload: dict) -> str:
 
 
 def main() -> int:
+    # Never throws, always prints something. A statusline that errors prints a
+    # traceback on every keystroke; the bare mark is the floor.
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}
         if not isinstance(payload, dict):
             payload = {}
     except Exception:
-        # Unparseable input is not worth an error line on every keystroke.
-        print(build({}))
-        return 0
+        payload = {}
     try:
         print(build(payload))
     except Exception:
-        print(build({}))
+        try:
+            print(build({}))
+        except Exception:
+            print(TAG or "tokendog")
     return 0
 
 
