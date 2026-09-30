@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] — 2026-09-30
+
+### Added
+- **`→ stale, /clear` is back**, keyed on idleness rather than session age: hours since the
+  transcript was last written, which on resume is when you left. It fires on the hygiene report's
+  "Close it now" rule — idle 12h and still carrying 150k — pinned to the report's constants by a
+  test. The old verb used session age, so it also fired on long sessions being actively worked.
+  It outranks every other verb: a loaded session left idle is the cheapest fix there is.
+
 ## [0.10.1] — 2026-09-30
 
 ### Changed

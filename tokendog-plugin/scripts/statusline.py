@@ -44,6 +44,10 @@ AGE_ALARM_H = 24.0      # overnight-idle sessions resume at full occupancy
 # fine and stays silent on a 120k one that is all dead schema.
 WORK_ALARM = 400_000    # history this big is what /clear and /compact are for
 SETUP_ALARM = 120_000   # re-sent every turn; only disabling something moves it
+# A loaded session left idle — the hygiene report's "Close it now". Restated
+# because this script cannot import tokendog; a test pins them to the report's.
+IDLE_STALE_H = 12.0         # untouched this long and it is not being come back to today
+STALE_MIN_CONTEXT = 150_000  # ...and still holding this much, so reopening it is expensive
 LIMIT_WARN = 60.0       # % of a rate-limit window consumed
 LIMIT_ALARM = 85.0
 
@@ -726,6 +730,28 @@ def terminal_cols() -> int:
     return 0
 
 
+def idle_hours(payload: dict) -> float | None:
+    """Hours since the transcript was last written.
+
+    On resume the statusline renders before the first new turn lands, so the
+    transcript's mtime is when the session was left. That is idleness; session
+    age is not — thirty hours of steady work is not a session left behind.
+    """
+    path = payload.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        return max(0.0, (time.time() - os.path.getmtime(path)) / 3600)
+    except OSError:
+        return None
+
+
+def is_stale(payload: dict, used: float | None) -> bool:
+    idle = idle_hours(payload)
+    return (idle is not None and idle >= IDLE_STALE_H
+            and used is not None and used >= STALE_MIN_CONTEXT)
+
+
 def _split_seg(payload: dict) -> Seg | None:
     """Setup, with its reductions: every part → the shrinkable ones → the
     largest → just the total → gone. `sys` goes first because the reader
@@ -817,7 +843,9 @@ def build(payload: dict) -> str:
 
     # One verb, only when the history is what is heavy: /clear and /compact
     # remove history and nothing else. The 80% prompt already sits on ctx.
-    hint = lever_hint(payload)
+    # Stale outranks everything: a loaded session left idle is the cheapest fix
+    # there is and the most expensive to ignore, and /clear is the whole fix.
+    hint = "→ stale, /clear" if is_stale(payload, used) else lever_hint(payload)
     # No split cached yet — the first turns of a session, which is exactly when
     # a resumed window most needs saying. Absolute occupancy decides instead.
     if hint is None and read_split(payload) is None and used is not None:
@@ -826,7 +854,7 @@ def build(payload: dict) -> str:
         elif used >= CTX_WARN:
             hint = "→ /compact"
     pct = num(dig(payload, "context_window", "used_percentage"))
-    if hint and not (pct is not None and pct >= BAR_ALARM and "compact" in hint):
+    if hint and not (pct is not None and pct >= BAR_ALARM and hint.endswith("/compact")):
         segs.append(Seg(paint(hint, RED if "clear" in hint else YEL), []))
 
     line = fit([s for s in segs if s], terminal_cols())

@@ -210,3 +210,57 @@ def test_a_heavy_setup_is_coloured():
     heavy = mod._setup_text(234_000, ["mcp 180k"])
     light = mod._setup_text(75_000, ["mcp 21k"])
     assert mod.YEL in heavy and mod.YEL not in light
+
+
+# --- stale: a loaded session left idle -----------------------------------------
+
+
+def _transcript(tmp_path, idle_h):
+    import os
+    t = tmp_path / "t.jsonl"
+    t.write_text("{}\n")
+    old = time.time() - idle_h * 3600
+    os.utime(t, (old, old))
+    return str(t)
+
+
+def _stale_payload(isolated, idle_h, ctx):
+    return _payload(isolated, transcript_path=_transcript(isolated, idle_h), context_window={
+        "current_usage": {"cache_read_input_tokens": ctx},
+        "context_window_size": 1_000_000, "used_percentage": ctx / 10_000})
+
+
+def test_a_loaded_session_resumed_after_a_long_idle_says_clear(isolated):
+    """The hygiene report's first finding: a big window left overnight costs its
+    whole size again on the first message back, and clearing it is one keystroke."""
+    line = plain(_load().build(_stale_payload(isolated, idle_h=14, ctx=180_000)))
+    assert "→ stale, /clear" in line
+
+
+def test_a_long_active_session_is_not_stale(isolated):
+    """Age is not idleness: thirty hours of steady work is not left behind."""
+    p = _stale_payload(isolated, idle_h=0.1, ctx=180_000)
+    p["cost"]["total_duration_ms"] = 30 * 3_600_000
+    assert "stale" not in plain(_load().build(p))
+
+
+def test_a_small_idle_session_is_not_worth_clearing(isolated):
+    assert "stale" not in plain(_load().build(_stale_payload(isolated, idle_h=40, ctx=40_000)))
+
+
+def test_stale_outranks_every_other_verb(isolated):
+    """Idle-and-loaded is the cheapest fix and the most expensive to ignore."""
+    line = plain(_load().build(_stale_payload(isolated, idle_h=20, ctx=450_000)))
+    assert "→ stale, /clear" in line and line.count("→") == 1
+
+
+def test_no_transcript_means_no_stale_verdict(isolated):
+    assert "stale" not in plain(_load().build(_payload(isolated)))
+
+
+def test_the_stale_rule_matches_the_hygiene_report():
+    """The statusline cannot import tokendog, so the thresholds are restated.
+    Pinned here so "Close it now" in the report and on the line cannot drift."""
+    from tokendog.hygiene import IDLE_STALE_H, STALE_MIN_CONTEXT
+    mod = _load()
+    assert mod.IDLE_STALE_H == IDLE_STALE_H and mod.STALE_MIN_CONTEXT == STALE_MIN_CONTEXT
