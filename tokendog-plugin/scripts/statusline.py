@@ -165,21 +165,21 @@ def floor_segment() -> str | None:
     if not total:
         return None
 
-    # A reader-friendly token count: keep one decimal under 10K so 2,335 reads as
-    # "2.3K", not "2K" — the floor numbers are small and the precision matters.
+    # Same format as the measured setup segment — lowercase k, parts in brackets
+    # separated by commas — with one decimal under 10k, since these are small.
     def fk(n: int) -> str:
         n = int(n or 0)
         if n < 1_000:
             return str(n)
         if n < 10_000:
-            return f"{n / 1_000:.1f}K"
+            return f"{n / 1_000:.1f}k"
         return human(n)
 
-    # Show EVERY kind that is present, spelled out, so "floor 2.4K (MCP 2.3K ·
-    # skills 66)" reads at a glance. The full itemised list is `tokendog floor`.
-    NAMES = [("mcp", "MCP"), ("skill", "skills"), ("instruction", "instructions")]
+    # "baseline", not "setup": this is what is installed on disk, measured before
+    # the session's own split exists, and it cannot see the system prompt.
+    NAMES = [("mcp", "mcp"), ("skill", "skills"), ("instruction", "instructions")]
     parts = [f"{label} {fk(sizes[key])}" for key, label in NAMES if sizes.get(key)]
-    breakdown = f" ({' · '.join(parts)})" if parts else ""
+    breakdown = f" ({', '.join(parts)})" if parts else ""
     return paint(f"baseline {fk(total)}{breakdown}", DIM)
 
 
@@ -579,7 +579,7 @@ def _read_json(path: str):
         return None
 
 
-def _update_lookup(home: str) -> tuple[str, str] | None:
+def _update_lookup(home: str) -> tuple[str, str, str] | None:
     plugins = os.path.join(home, ".claude", "plugins")
     inst = _read_json(os.path.join(plugins, "installed_plugins.json")) or {}
     records = [r for key, rs in (inst.get("plugins") or {}).items()
@@ -601,11 +601,28 @@ def _update_lookup(home: str) -> tuple[str, str] | None:
     entry = next((p for p in manifest.get("plugins") or []
                   if isinstance(p, dict) and p.get("name") == PLUGIN), None)
     available = str((entry or {}).get("version") or "")
-    return installed, available
+    return installed, available, str(rec.get("lastUpdated") or "")
 
 
-def update_segment(*, home: str | None = None, use_cache: bool = True) -> str | None:
-    """`v0.5.0→0.6.0 /plugin update`, only when the installed copy is behind."""
+def _iso_epoch(value: str) -> float | None:
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def update_segment(*, home: str | None = None, use_cache: bool = True,
+                   session_age_s: float | None = None) -> str | None:
+    """One of two notices, or nothing:
+
+      `v0.10.1→0.10.2 /plugin update`       the installed copy is behind its source
+      `0.10.2 installed, restart to load it` it is current, but THIS window
+                                             loaded its hooks before the update
+
+    The second is the one that matters day to day: updating a plugin does not
+    reach a session that is already open, and nothing else on screen says so.
+    """
     home = home or os.path.expanduser("~")
     state = os.environ.get("TOKENDOG_HOME") or os.path.join(os.path.expanduser("~"), ".tokendog")
     cache = os.path.join(state, "statusline_update.json")
@@ -624,16 +641,20 @@ def update_segment(*, home: str | None = None, use_cache: bool = True) -> str | 
                 os.replace(cache + ".tmp", cache)
             except OSError:
                 pass
-    if not pair or len(pair) != 2:
+    if not pair or len(pair) not in (2, 3):
         return None
     installed, available = str(pair[0]), str(pair[1])
+    updated_at = str(pair[2]) if len(pair) == 3 else ""
     # One of these came from a file a marketplace controls, and this prints to
     # a terminal: anything that is not plainly a version is refused.
     if not (_SAFE_VERSION.match(installed) and _SAFE_VERSION.match(available)):
         return None
-    if version_newer(installed, available) is not True:
-        return None
-    return paint(f"v{installed}→{available} /plugin update", YEL)
+    if version_newer(installed, available) is True:
+        return paint(f"v{installed}→{available} /plugin update", YEL)
+    installed_at = _iso_epoch(updated_at)
+    if session_age_s and installed_at and installed_at > time.time() - session_age_s:
+        return paint(f"{installed} installed, restart to load it", YEL)
+    return None
 
 
 # --- width fitting -------------------------------------------------------------
@@ -837,7 +858,8 @@ def build(payload: dict) -> str:
     if spend:
         segs.append(Seg(paint(cost_text(spend), DIM), [(18, None)]))
 
-    up = update_segment()
+    age_ms = num(dig(payload, "cost", "total_duration_ms"))
+    up = update_segment(session_age_s=age_ms / 1000 if age_ms else None)
     if up:
         segs.append(Seg(up, [(8, None)]))
 

@@ -264,3 +264,12 @@ def test_the_stale_rule_matches_the_hygiene_report():
     from tokendog.hygiene import IDLE_STALE_H, STALE_MIN_CONTEXT
     mod = _load()
     assert mod.IDLE_STALE_H == IDLE_STALE_H and mod.STALE_MIN_CONTEXT == STALE_MIN_CONTEXT
+
+
+def test_the_disk_baseline_uses_the_same_format_as_setup(isolated):
+    d = isolated / "state"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "statusline_floor.json").write_text(json.dumps(
+        {"sizes": {"mcp": 3_000, "skill": 1_500, "instruction": 0, "total": 4_500}}))
+    seg = plain(_load().floor_segment())
+    assert seg == "baseline 4.5k (mcp 3.0k, skills 1.5k)"

@@ -350,3 +350,56 @@ def test_the_lookup_is_cached_so_it_does_not_run_every_keystroke(tmp_path, monke
     first = mod.update_segment(home=home)
     (home / ".claude" / "plugins" / "installed_plugins.json").write_text("{}")
     assert mod.update_segment(home=home) == first      # served from the cache
+
+
+# --- restart notice ----------------------------------------------------------
+
+
+def _updated(tmp_path, installed, available, *, updated_ago_s):
+    from datetime import datetime, timedelta, timezone
+    home = _plugins(tmp_path, installed, available)
+    when = (datetime.now(timezone.utc) - timedelta(seconds=updated_ago_s)).isoformat()
+    p = home / ".claude" / "plugins" / "installed_plugins.json"
+    d = json.loads(p.read_text())
+    d["plugins"]["tokendog@tokendog"][0]["lastUpdated"] = when.replace("+00:00", "Z")
+    p.write_text(json.dumps(d))
+    return home
+
+
+def test_a_session_older_than_the_install_is_told_to_restart(tmp_path):
+    """The installed copy is current, but this window loaded its hooks at
+    startup, before the update. Nothing else on screen says so."""
+    mod = _load()
+    home = _updated(tmp_path, "0.10.2", "0.10.2", updated_ago_s=300)
+    seg = plain(mod.update_segment(home=home, use_cache=False,
+                                   session_age_s=3_600))
+    assert seg == "0.10.2 installed, restart to load it"
+
+
+def test_a_session_started_after_the_install_is_current(tmp_path):
+    mod = _load()
+    home = _updated(tmp_path, "0.10.2", "0.10.2", updated_ago_s=3_600)
+    assert mod.update_segment(home=home, use_cache=False, session_age_s=300) is None
+
+
+def test_being_behind_the_source_still_wins(tmp_path):
+    mod = _load()
+    home = _updated(tmp_path, "0.10.1", "0.10.2", updated_ago_s=300)
+    seg = plain(mod.update_segment(home=home, use_cache=False, session_age_s=3_600))
+    assert seg == "v0.10.1→0.10.2 /plugin update"
+
+
+def test_no_session_age_means_no_restart_verdict(tmp_path):
+    mod = _load()
+    home = _updated(tmp_path, "0.10.2", "0.10.2", updated_ago_s=300)
+    assert mod.update_segment(home=home, use_cache=False, session_age_s=None) is None
+
+
+def test_build_passes_the_session_age_through(tmp_path, monkeypatch):
+    mod = _load()
+    home = _updated(tmp_path, "0.10.2", "0.10.2", updated_ago_s=300)
+    monkeypatch.setattr(mod.os.path, "expanduser",
+                        lambda p: str(home) if p == "~" else p.replace("~", str(home), 1))
+    monkeypatch.setenv("TOKENDOG_HOME", str(tmp_path / "state2"))
+    line = plain(mod.build({"cost": {"total_duration_ms": 3_600_000}}))
+    assert "restart to load it" in line

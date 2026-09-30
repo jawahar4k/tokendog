@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] — 2026-09-30
+
+### Added
+- **`0.10.3 installed, restart to load it`.** The update notice only fired when the installed
+  plugin was behind its source — which, once updated, it never is. But a window opened before the
+  update does not load newly registered hooks until it restarts, and nothing on screen said so.
+  The statusline now compares the install time with this session's start and says so per window.
+
+### Changed
+- The on-disk baseline shown before a session's first split uses the same format as setup:
+  lowercase `k`, parts in brackets separated by commas.
+
 ## [0.10.2] — 2026-09-30
 
 ### Added
