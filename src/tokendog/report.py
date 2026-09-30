@@ -217,6 +217,38 @@ def format_savings(s: dict) -> str:
     return "\n".join(lines)
 
 
+def format_learnings(repo) -> str:
+    """This repo's lessons: shared, yours, and what capture and share last did."""
+    from .learn import lessons
+    from .learn_share import _status, enabled
+    shared, mine = lessons(repo, "shared"), lessons(repo, "local")
+    st = _status(repo)
+    lines = ["### TokenDog session learnings", ""]
+    if st:
+        lines.append(f"- last capture: {st.get('state', '?')}"
+                     + (f", {st.get('added', 0)} added" if st.get("state") == "done" else ""))
+        if st.get("share_state"):
+            lines.append(f"- last share: {st['share_state']}"
+                         + (f" — {st['share_url']}" if st.get("share_url") else ""))
+    lines.append(f"- automatic sharing: {'on' if enabled(repo) else 'off (TOKENDOG_LEARN_SHARE=on enables it)'}")
+    for label, group in (("Shared with the team", shared), ("Yours, not yet shared", mine)):
+        lines += ["", f"**{label}** ({len(group)})"]
+        if not group:
+            lines.append("_none_")
+        for les in group:
+            extra = ""
+            if les["scope"] == "local":
+                n = les["meta"].get("sessions", 1)
+                extra = f" — seen in {n} session{'s' if int(n or 1) != 1 else ''}"
+                if str(les["meta"].get("shared", "no")) != "no":
+                    extra += f", proposed in {les['meta']['shared']}"
+            lines.append(f"- `{les['file']}` {les['title']}{extra}")
+    if not shared and not mine:
+        lines += ["", "_Nothing learned yet. Capture runs at compaction and at session end, "
+                  "and most sessions have too little signal to reach a model at all._"]
+    return "\n".join(lines)
+
+
 def format_settings_plan(p: dict, st: dict) -> str:
     """What the installer would do to `~/.claude/settings.json`, key by key."""
     lines = ["### TokenDog settings", ""]
@@ -1238,6 +1270,12 @@ def main(argv=None) -> int:
     c.add_argument("--glitch-db")
     c.add_argument("--project", help="restrict to one project (transcript cwd basename)")
 
+    lr = sub.add_parser("learnings", help="lessons captured from sessions in this repo")
+    lr.add_argument("--forget", metavar="FILE", help="delete one of your lessons; never recapture it")
+    lr.add_argument("--share-now", action="store_true", help="share now, skipping the waits")
+    lr.add_argument("--index", action="store_true", help="rebuild .claude/learnings/INDEX.md")
+    lr.add_argument("--json", action="store_true", help="machine-readable list")
+
     si = sub.add_parser("settings", help="install/inspect the settings.json keys tokendog manages")
     si.add_argument("--apply", action="store_true", help="write the changes (default: show them)")
     si.add_argument("--replace", action="store_true", help="take over a key you set yourself")
@@ -1378,6 +1416,37 @@ def main(argv=None) -> int:
     if args.cmd == "cost":
         print(format_rollup(cost_summary(args.group_by, args.since, args.until,
                                          args.glitch_db, project=args.project)))
+    elif args.cmd == "learnings":
+        from .learn import forget, learn_dir, lessons
+        from .learn_share import build_index, share
+        from .learn_worker import repo_root
+        repo = repo_root(os.getcwd())
+        if repo is None:
+            print("tokendog learnings: not inside a git repository")
+            return 2
+        if args.forget:
+            les = forget(repo, args.forget)
+            if les is None:
+                print(f"tokendog learnings: no lesson named {args.forget} in your lessons")
+                return 2
+            print(f"Forgot: {les['title']}. It will not be captured again.")
+            return 0
+        if args.index:
+            d = learn_dir(repo)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "INDEX.md").write_text(build_index(d), encoding="utf-8")
+            print(f"Rebuilt {d / 'INDEX.md'}")
+            return 0
+        if args.share_now:
+            out = share(repo, explicit=True)
+            print(json.dumps(out, indent=1))
+            return 0 if out["state"] in ("done", "nothing") else 2
+        if args.json:
+            print(json.dumps({s: [{"file": l["file"], "title": l["title"], "meta": l["meta"]}
+                                  for l in lessons(repo, s)] for s in ("shared", "local")},
+                             indent=1, default=str))
+            return 0
+        print(format_learnings(repo))
     elif args.cmd == "settings":
         from .settings_install import apply as settings_apply
         from .settings_install import plan as settings_plan

@@ -235,6 +235,32 @@ If nothing on the machine can import `tokendog`, the SessionStart hook says so. 
 other hook fails open and exits 0, so without that message a wrong interpreter looks exactly like
 a quiet, well-behaved plugin — one that records nothing and reports `$0.00` forever.
 
+## Session learnings
+
+A pitfall re-discovered is an error → fix loop paid for again: the failed call, the diagnosis,
+the retry, and every later turn that re-reads all of it. TokenDog captures lessons from finished
+sessions and loads them into the next one, so that loop is paid once.
+
+- **Capture** runs at compaction and at session end, in the background. It reads only the
+  transcript bytes it has not mined before, extracts error → fix pairs, your corrections and
+  compaction summaries, and stops there for most sessions: below a signal score nothing calls a
+  model. Above it, Haiku proposes candidates, code gates check them (cited paths exist, secrets
+  redacted, duplicates dropped), and a second Haiku call **rejects by default**. If that review
+  fails, nothing is kept. About a cent a session when it runs.
+- **Apply** loads lessons at every session start as *notes to check against the code*, never as
+  instructions, capped at ~3k tokens.
+- **Share** is **off** unless `TOKENDOG_LEARN_SHARE=on`, because it pushes a branch and opens a
+  pull request on your repository. When on: at most weekly, one PR per repo, built in a throwaway
+  git worktree so your checkout is never touched. `/tokendog:learnings --share-now` shares on
+  request.
+
+Your lessons live in `.claude/learnings/_local/`, which gitignores itself. `/tokendog:learnings`
+lists them; `--forget <file>` deletes one and stops it being captured again.
+`TOKENDOG_LEARN=off` turns the whole thing off.
+
+A fix only counts when the retry runs the same thing: on a real session the looser rule counted 96
+"fixes", most of them an error followed by some unrelated command.
+
 ## Optional: Glitch
 
 Everything above works with Claude Code alone. If you also run Glitch

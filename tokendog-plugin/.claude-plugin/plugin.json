@@ -1,7 +1,7 @@
 {
   "name": "tokendog",
   "displayName": "TokenDog",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Watch and reduce Claude Code / Glitch token spend.",
   "author": {
     "name": "Jawahar Prasad",
@@ -15,7 +15,8 @@
     "./commands/tokendog-bands.md",
     "./commands/tokendog-effect.md",
     "./commands/tokendog-audit.md",
-    "./commands/tokendog-init.md"
+    "./commands/tokendog-init.md",
+    "./commands/tokendog-learnings.md"
   ],
   "mcpServers": {
     "tokendog-cost": {

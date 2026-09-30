@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] — 2026-09-30
+
+### Added — session learnings
+- **Capture** at `PreCompact` and `SessionEnd`, in a detached worker: new transcript bytes only,
+  extract error→fix pairs, corrections and compaction summaries; prefilter (most sessions never
+  reach a model); Haiku generator defaulting to `[]`; code gates (shape, evidence, cited paths
+  must exist, dedupe, redaction, length); a Haiku critic that rejects by default. A failed critic
+  keeps nothing, and a failed model call does not advance the offset, so those turns are retried.
+- **Apply** at every `SessionStart`: shared lessons, then yours, as notes to check, capped.
+- **Share**, off unless `TOKENDOG_LEARN_SHARE=on`: weekly, one PR per repo, built in a throwaway
+  worktree, `git add -f` exactly the lesson files and never `_local/`.
+- `/tokendog:learnings` — list, `--forget`, `--share-now`, `--index`. Statusline shows what the last
+  capture did, and shows it when it failed.
+
+### Found by running it on real sessions
+- The instruction must be the prompt argument: given on stdin, the model treated it as possible
+  injected content and refused. The captured signal travels inside explicit markers as data.
+- Replies arrive in a code fence, and `paths` held non-paths; the parser and gates handle both.
+- "An error, then a later success of the same tool" counted 96 fixes on one Bash-heavy session,
+  most of them an error followed by an unrelated command. A Bash retry must now run the same
+  program, and a non-zero exit whose output does not say what failed is not an error. 96 → 39.
+- End to end on a real session: 5 candidates, all through the gates, 1 kept by the critic — a
+  genuine esbuild pitfall with the build error quoted as evidence.
+
 ## [0.9.0] — 2026-09-30
 
 ### Changed — statusline, after use
