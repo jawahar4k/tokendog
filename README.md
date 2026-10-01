@@ -261,6 +261,20 @@ Read left to right:
 On a narrow terminal, segments shorten or drop in a fixed order, least actionable first; the
 window, the setup split and the suggestion stay.
 
+### In Glitch
+
+Glitch's own terminal UI runs the same script through its `statusLine.command`
+(`~/.glitch/config.yaml`):
+
+```yaml
+statusLine:
+  command: python3 /path/to/tokendog-plugin/scripts/statusline.py
+```
+
+It shows the folder and branch, model, context bar, cost and the suggested action. The `setup`
+split, `baseline` and plugin-update notice are Claude Code only and are left out. A `glitch launch`
+session is Claude Code, so it already shows the full line.
+
 ## Session learnings
 
 A pitfall re-discovered is an error → fix loop paid for again: the failed call, the diagnosis,

@@ -274,3 +274,22 @@ def test_the_disk_baseline_uses_the_same_format_as_setup(isolated):
         {"sizes": {"mcp": 3_000, "skill": 1_500, "instruction": 0, "total": 4_500}}))
     seg = plain(_load().floor_segment())
     assert seg == "baseline 4.5k (mcp 3.0k, skills 1.5k)"
+
+
+# --- under Glitch ---------------------------------------------------------------
+
+
+def test_glitch_gets_the_line_without_claude_code_only_segments(isolated, monkeypatch):
+    """Glitch runs this script as its statusLine.command. The baseline and the
+    plugin-update notice describe Claude Code's setup, not the Glitch session."""
+    mod = _load()
+    d = isolated / "state"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "statusline_floor.json").write_text(json.dumps(
+        {"sizes": {"mcp": 3_000, "skill": 1_500, "instruction": 0, "total": 4_500}}))
+    monkeypatch.setattr(mod, "update_segment", lambda **_: "v0.1→0.2 /plugin update")
+    claude = plain(mod.build(_payload(isolated)))
+    glitch = plain(mod.build(_payload(isolated, runtime="glitch")))
+    assert "baseline" in claude and "/plugin update" in claude
+    assert "baseline" not in glitch and "/plugin update" not in glitch
+    assert "abc ⎇ main" in glitch and "ctx 365k/1M" in glitch and "≈$11.77" in glitch

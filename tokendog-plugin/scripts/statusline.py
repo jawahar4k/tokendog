@@ -928,10 +928,14 @@ def build(payload: dict) -> str:
     if sp:
         segs.append(Seg(sp, []))
 
+    # Glitch runs this script too (its statusLine.command). The baseline and the
+    # plugin-update notice describe Claude Code's own setup, not Glitch's.
+    in_glitch = payload.get("runtime") == "glitch"
+
     spl = _split_seg(payload)
     if spl:
         segs.append(spl)
-    else:
+    elif not in_glitch:
         flr = floor_segment()
         if flr:
             segs.append(Seg(flr, [(10, None)]))
@@ -953,8 +957,9 @@ def build(payload: dict) -> str:
         segs.append(Seg(paint(cost_text(spend), DIM), [(18, None)]))
 
     age_ms = num(dig(payload, "cost", "total_duration_ms"))
-    up = update_segment(session_age_s=age_ms / 1000 if age_ms else None,
-                        transcript=payload.get("transcript_path"))
+    up = None if in_glitch else update_segment(
+        session_age_s=age_ms / 1000 if age_ms else None,
+        transcript=payload.get("transcript_path"))
     if up:
         segs.append(Seg(up, [(8, None)]))
 
